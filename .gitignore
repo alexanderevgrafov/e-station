@@ -1,0 +1,6 @@
+node_modules/
+.DS_Store
+.idea/
+epd_util/build/
+epd_update_util
+paper_*.png
