@@ -1,4 +1,10 @@
-import { TIMEZONE_OFFSET_MINUTES, TEST_TIME_HOLD_MS } from './constants.js';
+import {
+  TIMEZONE_OFFSET_MINUTES,
+  TEST_TIME_HOLD_MS,
+  FULL_REFRESH_ON_HOUR_CHANGE,
+  FULL_REFRESH_EVERY_N_PARTIALS,
+  PRE_CLEAR_BEFORE_REDRAW,
+} from './constants.js';
 
 // Protocol constants shared with epd_util/main.c
 const METHOD_FULL = 0;
@@ -96,15 +102,13 @@ function boundingBox(boxesArr) {
   };
 }
 
-// White push, windowed to box, before the redraw - a plain content push with
-// no pre-clear at all leaves old ink showing through (overlapping the new
-// glyph, confirmed). A black push before the white one was tried too, on the
-// theory that a full black<->white swing re-polarizes more thoroughly than
-// white alone, but on a merged (multi-digit) window it left the panel
-// applying that wide window's bounds to later, unrelated single-digit
-// updates until a full refresh - dropped for that reason. White-only is the
-// current approach; if ghosting reappears with just this, the black step may
-// need to come back for single-digit windows specifically.
+// An extra white-only frame, windowed to box, pushed before the redraw.
+// Unused unless PRE_CLEAR_BEFORE_REDRAW is on - the panel clears old ink by
+// itself now, see that constant. A black frame before the white one was
+// tried too, on the theory that a full black<->white swing re-polarizes more
+// thoroughly; it made the (since fixed) sticky-window bug worse and was
+// dropped. If ink ever starts overlapping again, turning the pre-clear back
+// on is step one and re-adding the black frame is step two.
 function preClearBox(display, box) {
   display.paint_drawRectangle(box.x1, box.y1, box.x2, box.y2, EPD_COLOR_WHITE, true);
   return frameFor(display, box);
@@ -128,6 +132,7 @@ function formatClock(digits) {
 
 let lastDigits = null;
 let testOverride = null; // { digits: "HHMM", expiresAt } | null - see /api/test
+let partialsSinceFull = 0; // see FULL_REFRESH_EVERY_N_PARTIALS
 
 async function fullRefreshImpl(display) {
   const { boxes, colonBox } = getLayout(display);
@@ -141,6 +146,7 @@ async function fullRefreshImpl(display) {
   display.saveCanvasAsImage('paper_full.png');
 
   lastDigits = digits;
+  partialsSinceFull = 0;
 
   return { text: formatClock(digits), result };
 }
@@ -148,18 +154,18 @@ async function fullRefreshImpl(display) {
 // Meant to be polled every CLOCK_POLL_INTERVAL_MS (faster than a minute, for
 // accuracy), but only ever does real work when HH:MM actually changed since
 // the last render - a poll that lands mid-minute is a true no-op:
-//  - if either hour digit changed, do a whole-panel full refresh instead of
-//    a partial one. This also naturally happens once an hour. A merged
-//    partial window spanning the hour digits (and the colon, which sits
-//    between H-ones and M-tens) was found to leave the panel applying that
-//    wide window's bounds to later, unrelated single-digit refreshes -
-//    unresolved so far (see README) - so that window is avoided entirely by
-//    falling back to a full refresh whenever it would otherwise be needed.
-//  - otherwise (only minute digit(s) changed), push the smallest single
-//    window spanning them (see boundingBox), white-precleared before the
-//    redraw (see preClearBox). A merged 2-digit minutes window (tens
-//    rollover) has the same underlying issue but is tolerated for now - see
-//    README.
+//  - draw the changed digit(s) onto the canvas and push the smallest single
+//    window spanning them (see boundingBox) as one frame. No white pre-clear
+//    pass: the panel diffs its own RAM buffers and clears the old ink itself
+//    (see PRE_CLEAR_BEFORE_REDRAW).
+//  - if either hour digit changed, that window is the widest one there is
+//    (both hour digits, the colon between them, and both minute digits).
+//    That case used to fall back to a whole-panel full refresh to sidestep
+//    the "sticky wide partial window" bug; with the RAM buffer-sync fix in
+//    epaper.c it goes through the same partial path as everything else.
+//    FULL_REFRESH_ON_HOUR_CHANGE restores the old fallback.
+//  - every FULL_REFRESH_EVERY_N_PARTIALS pushes, do a full refresh instead,
+//    to clear the residue partial refreshes leave behind.
 async function refreshImpl(display) {
   const digits = currentClockDigits();
   const prev = lastDigits;
@@ -168,7 +174,7 @@ async function refreshImpl(display) {
     return { text: formatClock(digits), touchedDigits: [], mode: 'idle', result: null };
   }
 
-  const { boxes } = getLayout(display);
+  const { boxes, colonBox } = getLayout(display);
   const prevDigits = prev ?? '    '; // no prior state: treat every digit as changed
 
   const touched = boxes.reduce((acc, b, i) => {
@@ -178,27 +184,53 @@ async function refreshImpl(display) {
 
   const hourChanged = touched.some((i) => i <= 1); // 0,1 = H-tens, H-ones
 
-  if (hourChanged) {
+  if (hourChanged && FULL_REFRESH_ON_HOUR_CHANGE) {
     const result = await fullRefreshImpl(display);
     return { ...result, mode: 'full-hour' };
+  }
+
+  if (touched.length && FULL_REFRESH_EVERY_N_PARTIALS > 0 && partialsSinceFull >= FULL_REFRESH_EVERY_N_PARTIALS) {
+    const result = await fullRefreshImpl(display);
+    return { ...result, mode: 'full-periodic' };
   }
 
   let result = null;
   if (touched.length) {
     const region = touched.length === 1 ? boxes[touched[0]] : boundingBox(touched.map((i) => boxes[i]));
+    const frames = [];
 
-    const frames = [preClearBox(display, region)];
+    if (PRE_CLEAR_BEFORE_REDRAW) frames.push(preClearBox(display, region));
+
+    // drawDigit white-fills its own box first, so the canvas - and therefore
+    // the frame read back off it - is already correct without a pre-clear
+    // frame. All the pre-clear ever did was force the *panel* to make a
+    // black->white pass it can make on its own.
     touched.forEach((i) => drawDigit(display, boxes[i], digits[i]));
+
+    // A window merged across the hour and minute digits also spans the colon
+    // sitting between them, which preClearBox wipes. The colon is otherwise
+    // only ever painted by a full refresh, so put it back.
+    if (PRE_CLEAR_BEFORE_REDRAW && region.x1 <= colonBox.x1 && region.x2 >= colonBox.x2) {
+      drawColon(display, { boxes, colonBox });
+    }
+
     frames.push(frameFor(display, region));
 
     result = await display.pushFrames(frames);
+    partialsSinceFull++;
   }
 
   display.saveCanvasAsImage('paper_partial.png');
 
   lastDigits = digits;
 
-  return { text: formatClock(digits), touchedDigits: touched, mode: 'partial', result };
+  return {
+    text: formatClock(digits),
+    touchedDigits: touched,
+    mode: PRE_CLEAR_BEFORE_REDRAW ? 'partial-preclear' : 'partial-quick',
+    partialsSinceFull,
+    result,
+  };
 }
 
 // refresh()/clearFull()/testTime() all read and mutate shared state

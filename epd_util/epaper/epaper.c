@@ -368,6 +368,16 @@ void epd_update_fast(void)
 void epd_update_partial(void)
 {
 
+    // 0xFF = enable clock + analog, load temperature, load LUT for display
+    // mode 2, display, then disable analog and disable clock. The trailing
+    // power-down is the difference from the reference drivers for this panel
+    // (GxEPD2 GDEY042T81 and ESPHome's SSD1683 both send 0xFC and leave the
+    // analog/clock up until an explicit power-off), so every partial push
+    // here power-cycles the panel - the same class of thing that already
+    // destabilized RAM differencing once (see main.c on batching frames into
+    // one process). It is left at 0xFF for now because the buffer-sync fix in
+    // epd_displayBW_partial2 is the change being tested; if partial refresh is
+    // still not clean, 0xFC is the next single-value thing to try.
     epd_write_reg(0x22); // Display Update Control
     epd_write_data(0xFF);
 
@@ -376,6 +386,13 @@ void epd_update_partial(void)
   epd_wait_busy();
 }
 
+// Selects the RAM window (0x44/0x45) *and* parks the RAM address counters
+// (0x4E/0x4F) at its top-left corner, so one call fully arms the controller
+// for a RAM write. Counters go after the window, never before: that is the
+// order every reference driver for this controller uses (GxEPD2's
+// _setPartialRamArea for GDEY042T81/SSD1683), and it removes any dependency
+// on whether writing a new window happens to reset the counters itself.
+// Bounds are inclusive - callers pass x2-1/y2-1 for a half-open box.
 void epd_address_set(uint16_t x_start, uint16_t y_start, uint16_t x_end, uint16_t y_end)
 {
 
@@ -389,13 +406,11 @@ void epd_address_set(uint16_t x_start, uint16_t y_start, uint16_t x_end, uint16_
     epd_write_data(y_end & 0xFF);
     epd_write_data((y_end >> 8) & 0xFF);
 
-//!!!!!!!
-//    epd_write_reg(0x4e);
-//    epd_write_data((x_start >> 3) & 0xFF);
-//    epd_write_reg(0x4f);
-//    epd_write_data(y_start & 0xFF);
-//    epd_write_data((y_start >> 8) & 0xFF);
-//!!!----------------
+    epd_write_reg(0x4E); // SET_RAM_X_ADDRESS_COUNTER
+    epd_write_data((x_start >> 3) & 0xFF);
+    epd_write_reg(0x4F); // SET_RAM_Y_ADDRESS_COUNTER
+    epd_write_data(y_start & 0xFF);
+    epd_write_data((y_start >> 8) & 0x01);
 
 }
 
@@ -524,17 +539,40 @@ void epd_displayBW_partial2(uint8_t *Image, uint16_t x1, uint16_t y1, uint16_t x
   WidthByte = (Width % 8 == 0) ? (Width / 8) : (Width / 8 + 1);
   bufLen = WidthByte * Height;
 
-  epd_setpos(x1, y1);
   epd_address_set(x1, y1, x2 - 1, y2 - 1);
-
   epd_write_reg(0x24);
   epd_write_imagedata(Image, bufLen);
 
   epd_update_partial();
 
-  epd_setpos(x1, y1);
+  // Re-arm BOTH RAM buffers with what is now physically on the panel, over
+  // the same window. Writing only 0x26 here is what caused the "sticky wide
+  // partial window" bug.
+  //
+  // A partial (mode 2) update drives the pixels where "current" and
+  // "previous" RAM disagree, and the controller flips which physical buffer
+  // 0x24/0x26 address as part of the update. So after the update, only the
+  // buffer we just wrote is known-good; its counterpart still holds whatever
+  // the *previous* push left in it - and only inside that push's window.
+  // Refreshing just 0x26 leaves the other buffer stale over exactly the
+  // window last used, so the next update compares against that stale region
+  // and drives the whole of it, ignoring the narrower window it was given.
+  // That is the reported symptom exactly: a narrow white pre-clear wiping
+  // the wider box from the previous push, sticky until a full refresh (which
+  // writes both buffers over the whole panel, see epd_displayBW) resets it.
+  // The official full-frame partial path never showed this because its
+  // window is always the entire panel, so a stale buffer can never be scoped
+  // differently from the next update.
+  //
+  // GxEPD2's driver for this exact panel (GDEY042T81/SSD1683) does the same
+  // thing after a windowed refresh - writeImageAgain() writes 0x26 *and*
+  // 0x24. Each write needs its own epd_address_set(): the RAM address
+  // counter has run past the end of the window by then.
   epd_address_set(x1, y1, x2 - 1, y2 - 1);
+  epd_write_reg(0x26); // previous
+  epd_write_imagedata(Image, bufLen);
 
-  epd_write_reg(0x26);
+  epd_address_set(x1, y1, x2 - 1, y2 - 1);
+  epd_write_reg(0x24); // current
   epd_write_imagedata(Image, bufLen);
 }
