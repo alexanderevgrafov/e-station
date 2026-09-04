@@ -145,9 +145,10 @@ export function AreaForm({ name, area, existing, fonts, onChange, onRename, onBr
 
       {area.type === 'svg' && <p className="hint">SVG is deliberately unimplemented for now.</p>}
 
-      {area.overlaps.length > 0 && (
+      {area.overlapped.length > 0 && (
         <p className="hint">
-          Overlaps <strong>{area.overlaps.join(', ')}</strong> - repainting this area also repaints the ones stacked above it.
+          Overlapped by <strong>{area.overlapped.join(', ')}</strong> - repainting this area is followed by repainting
+          those, since they sit above it.
         </p>
       )}
 

@@ -1,26 +1,34 @@
 import { useState } from 'react';
 import { api } from '../api.ts';
+import type { TStore } from '../../src/types.ts';
 
 interface Props {
-  pending: boolean; // saved edits the panel has not been shown yet
-  onSynced: () => void;
+  dirty: boolean; // the draft differs from what the server last confirmed
+  store: TStore;
+  onSaved: (store: TStore) => void;
 }
 
-// Editor saves are screen-independent: the document is written and the
-// preview updates, but the panel is left alone. This is the one control that
-// pushes a design to the glass, as a whole-panel clear and redraw.
-export function SyncBar({ pending, onSynced }: Props) {
+// Sync & Save is the only thing that writes the document or touches the
+// panel. Everything else in the editor is a local draft, so an edit in
+// progress can never be what /intake renders against.
+export function SyncBar({ dirty, store, onSaved }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [syncedAt, setSyncedAt] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
 
-  async function sync() {
+  async function run() {
     setBusy(true);
     setError(null);
+    setWarning(null);
     try {
-      await api.sync();
-      setSyncedAt(new Date().toLocaleTimeString());
-      onSynced();
+      // The server answers with the normalized document, which is what the
+      // draft becomes - so any clamping it applied is visible immediately
+      // rather than showing up as a surprise on the next load.
+      const result = await api.syncAndSave(store);
+      onSaved(result.store);
+      setSavedAt(new Date().toLocaleTimeString());
+      setWarning(result.warning ?? null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -33,17 +41,19 @@ export function SyncBar({ pending, onSynced }: Props) {
       <span className="hint topbar-status">
         {error ? (
           <span className="error">{error}</span>
-        ) : pending ? (
-          'Edits saved - panel not updated yet'
-        ) : syncedAt ? (
-          `Panel synced at ${syncedAt}`
+        ) : warning ? (
+          <span className="error">{warning}</span>
+        ) : dirty ? (
+          'Unsaved edits - nothing written, panel untouched'
+        ) : savedAt ? (
+          `Saved and synced at ${savedAt}`
         ) : (
-          'Panel is independent of the editor until you sync'
+          'No unsaved edits'
         )}
       </span>
 
-      <button type="button" className={pending ? '' : 'ghost'} onClick={() => void sync()} disabled={busy}>
-        {busy ? 'Syncing...' : 'Sync panel'}
+      <button type="button" className={dirty ? '' : 'ghost'} onClick={() => void run()} disabled={busy}>
+        {busy ? 'Saving...' : 'Sync & Save'}
       </button>
     </>
   );

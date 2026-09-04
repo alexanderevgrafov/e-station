@@ -47,7 +47,9 @@ server.ts (Express, HTTP API)
 
   -> src/routes/intake.ts  /intake/:area - the panel's update path
   -> src/routes/editor.ts  layout editor JSON API, /api/editor/*
-  -> src/store.ts          the layouts document: read/write data/layouts.json
+  -> src/document.ts       every operation on the document, as pure functions -
+                           shared with the browser, which edits a local draft
+  -> src/store.ts          persistence only: read/write data/layouts.json
   -> src/settings.ts       deep merge - shared with the browser
   -> src/types.ts          the document's shape - shared with the browser
 
@@ -112,7 +114,7 @@ document at `data/layouts.json` on the device:
           "type": "text",                // text | image | svg
           "x": 40, "y": 90, "w": 144, "h": 100,
           "z": 1,                        // unique, higher draws later
-          "overlaps": ["label"],         // DERIVED - never hand-edit
+          "overlapped": ["label"],       // DERIVED - never hand-edit
           "text": "12",                  // default text = initial state
           "font": "Ubuntu", "fontSize": 80,
           "fontWeight": "bold", "align": "right"
@@ -145,14 +147,15 @@ Edited through forms, and by dragging them on the screen preview.
 - **`z`** is assigned `max + 1` on create and is unique within a layout.
   Nothing renumbers it; "Bring to front" is the only thing that moves one.
   Duplicate `z` in a hand-edited file is broken up on load.
-- **`overlaps`** is **derived** - recomputed from geometry on every read and
-  every write, and whatever the file claims is discarded. Repainting an area
-  also repaints everything in this list that sits *above* it, transitively:
-  otherwise the area's fresh pixels would cover a neighbour that was drawn on
-  top of it. Areas *below* are not pulled in, since they were already
-  overdrawn. The whole set goes out as **one** partial window, not several -
-  two independent partial windows back to back reliably left one of them blank
-  on this panel (see the sticky-window section).
+- **`overlapped`** is **derived** - the areas that intersect this one *and*
+  sit above it, recomputed from geometry on every read and every write, with
+  whatever the file claimed discarded. Repainting an area is followed by
+  repainting everything in this list, transitively: otherwise the area's fresh
+  pixels would cover a neighbour that was drawn on top of it. Areas *below*
+  are deliberately absent - they were already overdrawn and need nothing. The
+  whole set goes out as **one** partial window, not several: two independent
+  partial windows back to back reliably left one of them blank on this panel
+  (see the sticky-window section).
 - **Types.** `text` and `image` are implemented; `svg` renders a dashed
   placeholder and is deliberately unimplemented.
 - **Fonts** come from `src/fonts.ts`, which scans the font directories
@@ -247,7 +250,7 @@ The layout list is a **collapsible floating menu** in the top bar rather than a
 sidebar: it closes as soon as a layout is picked, so the full width goes to the
 preview and the area form, which sit **side by side**. Below them are the
 layout's settings, the read-only effective settings, and a read-only dump of
-the stored layout JSON - useful for seeing the derived `z` and `overlaps`
+the stored layout JSON - useful for seeing the derived `z` and `overlapped`
 without opening the file on the device.
 
 Form fields commit **while you type**, debounced ~220ms, so the preview tracks
@@ -255,7 +258,7 @@ the keystrokes. Each field stops accepting incoming prop updates once touched;
 without that, the round-trip after each commit would rewrite the input from the
 server's normalized value mid-word and move the caret.
 
-### Preview, and the Sync button
+### The draft model, preview, and Sync & Save
 
 The screen zone layers **the true render** - a PNG from `/api/editor/layouts/
 :name/preview.png`, produced by the exact `drawLayout` that paints the panel -
@@ -268,12 +271,29 @@ a design surface: you need to see the default text you just typed, not
 whatever value `/intake` last pushed over it. It is always on - there is no
 toggle.
 
-**The panel is independent of the editor.** Saving writes the document and
-updates the preview but deliberately does *not* touch the display - editing is
-an iterative loop and the panel is slow. The **Sync** button in the top bar is
-the one control that reaches the glass, as a whole-panel clear and redraw
-(`POST /api/editor/sync`). The bar says when there are saved-but-unsynced
-edits.
+**The editor edits a local draft.** The whole document lives in the browser
+and nothing - not the file, not the panel - changes until **Sync & Save**
+(`POST /api/editor/sync`), which persists the document and then full-clears
+and redraws the panel.
+
+That is not just about sparing the display. Per-field writes meant the server
+reloaded the document after every keystroke-sized edit, so a half-finished
+change was what the *next `/intake`* rendered against: move an area and the
+clock would jump there on its next minute, before you had finished
+positioning it. A draft cannot leak that way.
+
+Every edit is a pure operation from `src/document.ts`, which the browser and
+the server both run - so a draft the editor accepted is a draft the server
+will accept, and the incoming document is still re-normalized on save rather
+than trusted. There are no granular mutation endpoints any more.
+
+Image uploads are the one exception: they hit the server immediately, because
+they are content rather than layout. The area's `src` pointing at one stays in
+the draft like everything else.
+
+If the save succeeds but the panel refuses to repaint, that comes back as a
+**warning, not an error** - the document really is on disk, and reporting a
+failed save would leave the editor offering to write it again.
 
 `data/` is **excluded from the deploy rsync**. The editor writes it on the
 device, and `rsync --delete` would otherwise wipe real edits on every deploy.
@@ -318,32 +338,24 @@ Also:
 - `GET /api/status` - current layout, its areas, the live state, the globals.
 - `GET /api/clear-full` - immediate whole-panel full refresh.
 
-Layout editor API, all under `/api/editor`. Every mutating call answers with
-the **whole** document (`{success, store, currentLayout}`), so the browser
-replaces its state wholesale instead of patching a local copy that could
-drift. Each one also reloads the context and repaints, so a save is visible on
-the panel immediately:
+Layout editor API, all under `/api/editor`:
 
 - `GET /store`
 - `PUT /global` - `{global}`
 - `PUT /settings` - `{settings}` (the global defaults)
-- `POST /layouts` - `{name}` · `POST /layouts/:name/rename` · `DELETE /layouts/:name`
-- `PUT /layouts/:name/settings` - `{settings}`
-- `POST /layouts/:name/areas` - `{name, type}`
-- `PUT /layouts/:name/areas/:area` - `{area}` (partial patch; `z` and
-  `overlaps` in the patch are ignored)
-- `POST /layouts/:name/areas/:area/rename` - `{name}`
-- `POST /layouts/:name/areas/:area/front` - bring to front
-- `POST /layouts/:name/areas/:area/clone` - `{name}` optional; omit it and the
-  server auto-names ("hours" -> "hours 2"). The copy is nudged 8px down-right
-  and lands on top.
-- `DELETE /layouts/:name/areas/:area`
-- `PUT /layouts/:name/areas` - `{areas}`, bulk replace, for hand-repair
+- `POST /sync` - `{store}`. **Sync & Save**: persists the whole document, then
+  full-clears and redraws the panel. The only endpoint that writes anything or
+  touches the glass. Answers `{success, store, warning?}` - `warning` when the
+  save landed but the panel did not repaint.
+- `POST /preview.png` - `{store, layout}`. The true render of an **unsaved**
+  draft; persists nothing.
 - `GET /fonts` · `GET /fonts/:id/file`
 - `POST /images` - raw PNG/JPEG body, returns `{id, width, height, bytes}`
 - `GET /images` · `GET /images/:id` · `DELETE /images/:id`
-- `GET /layouts/:name/preview.png` - the true render
-- `POST /sync` - the Sync button: whole-panel clear and redraw
+
+There are deliberately **no per-field mutation endpoints**. Every document
+operation lives in `src/document.ts` as a pure function and runs in the
+browser against the draft.
 
 Failures answer `{success: false, message}` with a real status - 400 for a
 malformed body or bad name, 404 for an unknown layout/area, 409 for a name
@@ -651,8 +663,8 @@ of them was the cause:
 - `/intake/<area>?text=...` to drive any area by hand; the response says
   whether it repainted and which areas it pulled in.
 - `/api/status` for what the server believes is on the panel right now.
-- `/api/editor/layouts/<name>/preview.png` for the true render as an image,
-  without a browser.
+- `POST /api/editor/preview.png` with `{store, layout}` for the true render as
+  an image, without a browser.
 - `epd.ts` saves `paper_partial.png`/`paper_full.png` after every render -
   useful for confirming what the *software* thinks it drew, independent of
   what the panel actually shows.

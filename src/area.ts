@@ -73,15 +73,16 @@ export function byZ(areas: Record<string, TArea>): [string, TArea][] {
   return Object.entries(areas).sort(([, a], [, b]) => a.z - b.z);
 }
 
-// The derived `overlaps` list on every area: who it intersects, in z order.
-// Recomputed wholesale rather than patched, so it cannot drift from geometry.
-export function computeOverlaps(areas: Record<string, TArea>): Record<string, string[]> {
+// The derived `overlapped` list on every area: the areas that intersect it
+// *and* are stacked above it, in z order. Recomputed wholesale rather than
+// patched, so it cannot drift from geometry.
+export function computeOverlapped(areas: Record<string, TArea>): Record<string, string[]> {
   const entries = Object.entries(areas);
   const out: Record<string, string[]> = {};
 
   for (const [name, area] of entries) {
     out[name] = entries
-      .filter(([other, otherArea]) => other !== name && rectsOverlap(area, otherArea))
+      .filter(([other, otherArea]) => other !== name && otherArea.z > area.z && rectsOverlap(area, otherArea))
       .sort(([, a], [, b]) => a.z - b.z)
       .map(([other]) => other);
   }
@@ -89,10 +90,9 @@ export function computeOverlaps(areas: Record<string, TArea>): Record<string, st
   return out;
 }
 
-// Repainting an area means repainting everything stacked on top of whatever
-// gets touched - otherwise the area's own fresh pixels cover a neighbour that
-// was drawn above it. Transitive, because an area pulled in this way can
-// itself have things above it.
+// Repainting an area means repainting everything stacked on top of it, which
+// `overlapped` already lists directly. Still transitive: an area pulled in
+// this way can itself have areas above it.
 export function withAreasAbove(areas: Record<string, TArea>, seed: string[]): string[] {
   const included = new Set<string>();
   const queue = [...seed];
@@ -104,9 +104,8 @@ export function withAreasAbove(areas: Record<string, TArea>, seed: string[]): st
     if (!area) continue;
     included.add(name);
 
-    for (const other of area.overlaps) {
-      const otherArea = areas[other];
-      if (otherArea && otherArea.z > area.z && !included.has(other)) queue.push(other);
+    for (const other of area.overlapped) {
+      if (!included.has(other)) queue.push(other);
     }
   }
 
@@ -149,7 +148,7 @@ export function defaultArea(type: TAreaType, global: TGlobal, z: number): TArea 
     { x: 0, y: 0, w: Math.min(160, global.screenWidth), h: Math.min(80, global.screenHeight) },
     global,
   );
-  const common = { ...geometry, z, overlaps: [] };
+  const common = { ...geometry, z, overlapped: [] };
 
   if (type === 'text') {
     return { ...common, type, text: 'Text', font: 'Ubuntu', fontSize: 32, fontWeight: 'normal', align: 'center' };
@@ -185,15 +184,17 @@ export function normalizeArea(raw: unknown, global: TGlobal, z: number): TArea {
     global,
   );
 
-  const overlaps = Array.isArray(source['overlaps'])
-    ? source['overlaps'].filter((v): v is string => typeof v === 'string')
+  // Discarded and recomputed by the document layer anyway; parsed only so a
+  // round-trip through here does not drop the key entirely.
+  const overlapped = Array.isArray(source['overlapped'])
+    ? source['overlapped'].filter((v): v is string => typeof v === 'string')
     : [];
 
   if (base.type === 'text') {
     return {
       ...base,
       ...geometry,
-      overlaps,
+      overlapped,
       text: str(source['text'], base.text),
       font: str(source['font'], base.font),
       fontSize: Math.max(1, num(source['fontSize'], base.fontSize)),
@@ -207,7 +208,7 @@ export function normalizeArea(raw: unknown, global: TGlobal, z: number): TArea {
     return {
       ...base,
       ...geometry,
-      overlaps,
+      overlapped,
       src: typeof src === 'string' && src !== '' ? src : null,
       posX: measure(source['posX'], base.posX),
       posY: measure(source['posY'], base.posY),
@@ -218,7 +219,7 @@ export function normalizeArea(raw: unknown, global: TGlobal, z: number): TArea {
     };
   }
 
-  return { ...base, ...geometry, overlaps };
+  return { ...base, ...geometry, overlapped };
 }
 
 // The state an area starts with. Text seeds from its default text, so a

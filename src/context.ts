@@ -158,19 +158,9 @@ export class Context {
     return this.panel.fullRefresh(frame.layout, frame.state, frame.global, frame.images, mode);
   }
 
-  // After an editor write: pick up the new document, but deliberately leave
-  // the panel alone. Editing is a fast, iterative loop and the panel is slow,
-  // so pushing on every keystroke-sized save would make the editor crawl and
-  // wear the display for nothing. The screen follows on an explicit sync.
-  async applyEditorChange(): Promise<void> {
-    await this.reload();
-    if (!this.ready) return;
-    // The interval itself may have just been edited.
-    this.panel.startFullRefreshTimer(() => this.frame());
-  }
-
-  // The Sync button: whole-panel clear and redraw, bringing the screen up to
-  // whatever the document and live state now say.
+  // Sync & Save: the document has just been written, so pick it up and bring
+  // the panel to it with a whole-panel clear and redraw. The only path by
+  // which an editor change reaches the glass.
   async sync(): Promise<RefreshResult | null> {
     await this.reload();
     this.panel.startFullRefreshTimer(() => this.frame());

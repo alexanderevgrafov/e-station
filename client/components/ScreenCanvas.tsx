@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { api } from '../api.ts';
 import { byZ, normalizeGeometry, X_ALIGN } from '../../src/area.ts';
 import type { Rect } from '../../src/area.ts';
 import type { TArea, TAreaType, TGlobal, TLayout } from '../../src/types.ts';
 import { AREA_TYPES } from '../../src/types.ts';
 
 interface Props {
-  layoutName: string;
   layout: TLayout;
   global: TGlobal;
-  version: number; // bumped on every save, to bust the preview PNG cache
+  previewUrl: string | null; // server render of the *draft*, see usePreview
   selected: string | null;
   onSelect: (name: string | null) => void;
   onMove: (name: string, rect: Rect) => Promise<void>;
@@ -28,10 +26,9 @@ interface Drag {
 }
 
 export function ScreenCanvas({
-  layoutName,
   layout,
   global,
-  version,
+  previewUrl,
   selected,
   onSelect,
   onMove,
@@ -119,12 +116,7 @@ export function ScreenCanvas({
         style={{ width: global.screenWidth, height: global.screenHeight }}
         onPointerDown={() => onSelect(null)}
       >
-        <img
-          className="screen-render"
-          src={api.previewUrl(layoutName, version)}
-          alt="panel render"
-          draggable={false}
-        />
+        {previewUrl && <img className="screen-render" src={previewUrl} alt="panel render" draggable={false} />}
 
         {byZ(layout.areas).map(([name, area]) => {
           const rect = rectOf(name, area);

@@ -54,10 +54,12 @@ export interface TAreaCommon {
   // Unique across a layout, higher draws later. Assigned max+1 on create and
   // otherwise left alone; "Bring to front" is the only thing that changes it.
   z: number;
-  // Derived, never edited by hand: which other areas this one intersects.
-  // Recomputed server-side on every area write. A partial refresh of this
-  // area also has to repaint everything here that sits above it.
-  overlaps: string[];
+  // Derived, never edited by hand: the areas that intersect this one *and*
+  // sit above it. Recomputed on every write. Repainting this area has to be
+  // followed by repainting everything listed here, or its fresh pixels would
+  // cover a neighbour that was drawn on top of it. Areas below are not
+  // listed - they were already overdrawn and need nothing.
+  overlapped: string[];
 }
 
 export interface TTextArea extends TAreaCommon {
