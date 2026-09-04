@@ -1,0 +1,22 @@
+[Unit]
+Description=E-Station Node.js Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/dietpi/e-station
+# server.ts, not server.js: the Pi's Node strips TypeScript types natively, so
+# the .ts file is the production entry point and there is no build step. See
+# README, "TypeScript, and what gets built".
+#
+# /usr/bin/env rather than a bare `node` or a hardcoded /usr/local/bin/node:
+# systemd needs an absolute ExecStart, and env keeps this working if node ever
+# moves.
+ExecStart=/usr/bin/env node server.ts
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

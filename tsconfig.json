@@ -1,0 +1,32 @@
+{
+  // Server + shared code. Never emits: the Pi runs Node 24, which strips
+  // types natively, so `node server.ts` is the production entry point and
+  // there is no server build step. `tsc` here is a type checker only.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+
+    // Relative imports must carry their real extension (`./logic.ts`) for
+    // Node's type stripping to resolve them - it does no path rewriting.
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+
+    // Node strips types, it does not compile them. Anything that needs code
+    // generated for it - enum, namespace, constructor parameter properties,
+    // decorators - would run differently (or not at all) under plain Node.
+    // This flag makes tsc reject that syntax instead of letting it through.
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowJs": false
+  },
+  "include": ["server.ts", "src/**/*.ts"]
+}

@@ -1,13 +1,36 @@
-import { spawn } from 'child_process';
+import { spawn } from 'node:child_process';
 import { createCanvas, registerFont } from 'canvas';
-import fs from 'fs';
-
-const EPD_COLOR_WHITE = 0xFF;
-const EPD_COLOR_BLACK = 0x00;
+import type { Canvas, CanvasRenderingContext2D } from 'canvas';
+import fs from 'node:fs';
 
 const UTIL_PATH = '/home/dietpi/e-station/epd_update_util';
+const FONT_PATH = '/home/dietpi/.fonts/ubuntu/Ubuntu-B.ttf';
+
+// One frame as epd_update_util reads it off stdin: a 9-byte header followed
+// by the packed 1bpp image data for that frame's region.
+export interface EpdFrame {
+  method: number;
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
+  buffer: Uint8Array;
+}
+
+export interface EpdPushResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  frameCount: number;
+}
 
 export class EPaperDisplay {
+  readonly width: number;
+  readonly height: number;
+  readonly canvas: Canvas;
+  readonly ctx: CanvasRenderingContext2D;
+  private _queue: Promise<unknown>;
+
   constructor() {
     this.width = 400;
     this.height = 300;
@@ -24,62 +47,21 @@ export class EPaperDisplay {
     this._queue = Promise.resolve();
   }
 
-  registerFonts() {
-    registerFont('/home/dietpi/.fonts/ubuntu/Ubuntu-B.ttf', { family: 'Ubuntu' });
-  }
-
-  // Clear canvas
-  paint_clear(color) {
-    this.ctx.fillStyle = color === EPD_COLOR_BLACK ? '#000000' : '#FFFFFF';
-    this.ctx.fillRect(0, 0, this.width, this.height);
-  }
-
-  paint_drawLine(xstart, ystart, xend, yend, color) {
-    this.ctx.strokeStyle = color === EPD_COLOR_BLACK ? '#000000' : '#FFFFFF';
-    this.ctx.linewidth = 1;
-    this.ctx.beginPath();
-    this.ctx.moveTo(xstart, ystart);
-    this.ctx.lineTo(xend, yend);
-    this.ctx.stroke();
-  }
-
-  paint_drawRectangle(xstart, ystart, xend, yend, color = 0, mode = true) {
-    const width = xend - xstart;
-    const height = yend - ystart;
-
-    if (mode) {
-      // Filled rectangle
-      this.ctx.fillStyle = color === EPD_COLOR_BLACK ? '#000000' : '#FFFFFF';
-      this.ctx.fillRect(xstart, ystart, width, height);
-    } else {
-      // Outline rectangle
-      this.ctx.strokeStyle = color === EPD_COLOR_BLACK ? '#000000' : '#FFFFFF';
-      this.ctx.linewidth = 1;
-      this.ctx.strokeRect(xstart, ystart, width, height);
+  // The font only exists on the device. Off-device the whole point of
+  // running the server is the layout editor, which never touches the panel -
+  // so a missing font warns instead of taking the process down. Clock
+  // rendering would fall back to the `serif` in its font stack, at the wrong
+  // metrics, which is why this warns loudly rather than staying quiet.
+  registerFonts(): void {
+    const fontPath = process.env['ESTATION_FONT_PATH'] ?? FONT_PATH;
+    try {
+      registerFont(fontPath, { family: 'Ubuntu' });
+    } catch (error) {
+      console.warn(`Could not register ${fontPath} - clock glyphs will render with the wrong metrics.`, error);
     }
   }
 
-  paint_drawCircle(xCenter, yCenter, radius, color, mode) {
-    this.ctx.beginPath();
-    this.ctx.arc(xCenter, yCenter, radius, 0, 2 * Math.PI);
-
-    if (mode) {
-      this.ctx.fillStyle = color === EPD_COLOR_BLACK ? '#000000' : '#FFFFFF';
-      this.ctx.fill();
-    } else {
-      this.ctx.strokeStyle = color === EPD_COLOR_BLACK ? '#000000' : '#FFFFFF';
-      this.ctx.linewidth = 1;
-      this.ctx.stroke();
-    }
-  }
-
-  paint_showString(x, y, text, size, color) {
-    this.ctx.fillStyle = color === EPD_COLOR_BLACK ? '#000000' : '#FFFFFF';
-    this.ctx.font = `${size}px Ubuntu, serif`;
-    this.ctx.fillText(text, x, y + size); // Adjust y for baseline
-  }
-
-  displayBW(method, x1=0, y1=0, x2=400, y2=300) {
+  displayBW(method: number, x1 = 0, y1 = 0, x2 = 400, y2 = 300): Promise<EpdPushResult> {
     return this.pushFrames([{ method, x1, y1, x2, y2, buffer: this.canvasToBuffer(x1, y1, x2, y2) }]);
   }
 
@@ -92,15 +74,15 @@ export class EPaperDisplay {
   // and inverted/corrupted output seen when clearing+redrawing a region
   // across 3 separate displayBW() calls. All frames in one batch must share
   // the same method (the util initializes once, from the first frame's).
-  pushFrames(frames) {
+  pushFrames(frames: EpdFrame[]): Promise<EpdPushResult> {
     const run = () => this._pushFramesToPanel(frames);
     const result = this._queue.then(run, run);
     this._queue = result.catch(() => {}); // one failed push must not jam the queue for the next one
     return result;
   }
 
-  _pushFramesToPanel(frames) {
-    return new Promise((resolve, reject) => {
+  _pushFramesToPanel(frames: EpdFrame[]): Promise<EpdPushResult> {
+    return new Promise<EpdPushResult>((resolve, reject) => {
       const childProcess = spawn(UTIL_PATH, [], {
         stdio: ['pipe', 'pipe', 'pipe'], // stdin, stdout, stderr
       });
@@ -108,11 +90,17 @@ export class EPaperDisplay {
       let stdout = '';
       let stderr = '';
 
-      childProcess.stdout.on('data', (data) => {
+      const { stdin, stdout: out, stderr: err } = childProcess;
+      if (!stdin || !out || !err) {
+        reject(new Error('epd_update_util was spawned without its stdio pipes'));
+        return;
+      }
+
+      out.on('data', (data: Buffer) => {
         stdout += data.toString();
       });
 
-      childProcess.stderr.on('data', (data) => {
+      err.on('data', (data: Buffer) => {
         stderr += data.toString();
       });
 
@@ -146,15 +134,15 @@ export class EPaperDisplay {
         headBuff.writeUInt16LE(x2, 5);
         headBuff.writeUInt16LE(y2, 7);
 
-        childProcess.stdin.write(headBuff);
-        childProcess.stdin.write(buffer);
+        stdin.write(headBuff);
+        stdin.write(buffer);
       }
 
-      childProcess.stdin.end();
+      stdin.end();
     });
   }
 
-  canvasToBuffer(x1,y1,x2,y2) {
+  canvasToBuffer(x1: number, y1: number, x2: number, y2: number): Uint8Array {
     const width = x2 - x1;
     const height = y2 - y1;
     const widthByte = Math.floor(width % 8 === 0 ? width / 8 : width / 8 + 1);
@@ -164,15 +152,18 @@ export class EPaperDisplay {
     const bufferSize = widthByte * height;
     const buffer = new Uint8Array(bufferSize).fill(0xFF);
 
+    // The `!` reads below are bounds-guaranteed by the loop and by
+    // bufferSize; they are only here because noUncheckedIndexedAccess types
+    // every typed-array read as possibly-undefined.
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const pixelIndex = (y * width + x) * 4;
 
         // Set bit based on brightness threshold
         // Dark pixels (below threshold) = 1, bright pixels = 0
-        const isBlack = pixels[pixelIndex] < 128;
+        const isBlack = pixels[pixelIndex]! < 128;
         const addr = Math.floor(x / 8) + y * widthByte;
-        const bite = buffer[addr];
+        const bite = buffer[addr]!;
         if (isBlack) {
           buffer[addr] = bite & ~(0x80 >> (x % 8));
         } else
@@ -183,7 +174,7 @@ export class EPaperDisplay {
     return buffer;
   }
 
-  saveCanvasAsImage(filename) {
+  saveCanvasAsImage(filename: string): void {
     const buffer = this.canvas.toBuffer('image/png');
     fs.writeFileSync(filename, buffer);
   }

@@ -4,3 +4,11 @@ node_modules/
 epd_util/build/
 epd_update_util
 paper_*.png
+
+# Editor bundle - built by `yarn build:client` from client/, and rebuilt as
+# part of `yarn deploy`. Source of truth is client/, not this.
+public/editor/
+
+# Layout documents, written by the editor at runtime. Lives on the device;
+# deploy.sh excludes it from the rsync so a deploy can't clobber real edits.
+data/

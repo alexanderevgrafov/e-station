@@ -1,0 +1,24 @@
+{
+  // Browser code. Also a type checker only - webpack transpiles via
+  // esbuild-loader, which strips types without consulting tsc. Run
+  // `yarn typecheck` to actually check them.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "verbatimModuleSyntax": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "skipLibCheck": true
+  },
+  // src/types.ts is shared with the server - it is the single definition of
+  // the stored document's shape, imported by both sides.
+  "include": ["client/**/*.ts", "client/**/*.tsx", "src/types.ts"]
+}
