@@ -1,0 +1,8 @@
+{
+  // IDEs (PhpStorm/WebStorm/VS Code) only auto-discover files literally named
+  // "tsconfig.json" by walking up from the edited file. The root tsconfig.json
+  // is the server config (no jsx, doesn't include client/**), so without this
+  // file editors pick that one up for client/*.tsx and report TS17004/TS6142.
+  // `yarn typecheck` is unaffected - it points at ../tsconfig.client.json directly.
+  "extends": "../tsconfig.client.json"
+}
