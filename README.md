@@ -388,6 +388,35 @@ reports success must mean the server is actually answering** - hence the hard
 failure, and hence the unit living in the repo so `ExecStart` cannot drift
 from the code again.
 
+## Device access & hardening
+
+SSH is on **port 1113**, not 22, and key-only (`PasswordAuthentication no`,
+`PermitRootLogin prohibit-password`) - `/etc/ssh/sshd_config.d/00-hardening.conf`
+on the device, sorted to load before DietPi's own `dietpi.conf` drop-in (which
+defaults both back to permissive) so it wins. Both `root` and `dietpi` had
+real passwords set with password auth wide open when this was found -
+disabled rather than rotated, since key auth already covers access.
+
+None of this lives in the repo or survives a re-flash of the SD card; it's
+config applied directly on the device (`ssh -p 1113 root@192.168.233.109`).
+
+This came out of the board being found hard-hung (powered on, associated on
+Wi-Fi, but completely unresponsive - not a network issue, confirmed by the
+`.233` gateway itself responding fine while the board didn't). No root cause
+was found because the pre-existing setup only kept logs in RAM, so whatever
+caused the freeze was gone by the time it could be inspected. Fixed for next
+time:
+
+- **Persistent journald** (`Storage=persistent` in `/etc/systemd/journald.conf`,
+  capped at `SystemMaxUse=200M`) - logs now survive a reboot instead of living
+  only in the volatile in-memory buffer.
+- **Hardware watchdog** (`RuntimeWatchdogSec=15s` in `/etc/systemd/system.conf`)
+  - if the OS/kernel wedges again, the board auto-reboots instead of sitting
+    hung until someone notices and power-cycles it by hand.
+- **Heartbeat cron**, every 2 minutes, hitting `/api/status` and appending to
+  `/var/log/e-station-heartbeat.log` (log-rotated weekly) - gives a timestamped
+  record of the last known-good check, independent of the journal.
+
 ## Globals
 
 `src/constants.ts` is gone - these live in the document's `global` object now
