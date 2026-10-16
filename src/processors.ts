@@ -1,3 +1,4 @@
+import { seedOf } from './render.ts';
 import type { TArea, TAreaState, TAreaType } from './types.ts';
 
 // A processor decides what a state change means for the panel. One per area
@@ -46,10 +47,19 @@ const textProcessor: Processor = (next, previous, { area }) => {
 // mean anything. Pass 2 gives image a real one.
 const inertProcessor: Processor = () => NO_REDRAW;
 
+// Fractal: a new seed is a new picture; anything else in the patch is noise.
+const fractalProcessor: Processor = (next, previous) => {
+  const before = seedOf(previous);
+  const after = seedOf(next);
+  if (before === after) return NO_REDRAW;
+  return { redraw: true, reason: `seed ${before} -> ${after}` };
+};
+
 const processors: Record<TAreaType, Processor> = {
   text: textProcessor,
   image: inertProcessor,
   svg: inertProcessor,
+  fractal: fractalProcessor,
 };
 
 export function processorFor(type: TAreaType): Processor {

@@ -14,6 +14,10 @@ import { EMPTY_STORE } from './types.ts';
 // live per-area state, and the panel. Everything that draws goes through
 // here.
 
+function randomSeed(): number {
+  return Math.floor(Math.random() * 0x7fffffff);
+}
+
 export class Context {
   readonly panel = new Panel();
 
@@ -33,6 +37,10 @@ export class Context {
   // Decoded images for the current layout. Rendering is synchronous, so the
   // bank is warmed on every reload and handed to the renderer as data.
   private images: ImageBank = new Map();
+
+  // One interval per fractal area, re-rolling its seed. Rebuilt on every
+  // reload, since the interval is part of the layout being edited.
+  private fractalTimers: NodeJS.Timeout[] = [];
 
   get global(): TGlobal {
     return this.store.global;
@@ -91,6 +99,7 @@ export class Context {
     if (!layout) {
       this.state = {};
       this.images = new Map();
+      this.startFractalTimers();
       return;
     }
 
@@ -106,6 +115,7 @@ export class Context {
       next[name] = this.externallySet.has(name) ? { ...seeded, ...(this.state[name] ?? {}) } : seeded;
     }
     this.state = next;
+    this.startFractalTimers();
 
     for (const name of [...this.externallySet]) {
       if (!layout.areas[name]) this.externallySet.delete(name);
@@ -117,12 +127,33 @@ export class Context {
     this.currentLayoutName = name;
     this.state = defaultLayoutState(this.store.layouts[name].areas);
     this.externallySet.clear();
+    this.startFractalTimers();
+  }
+
+  private startFractalTimers(): void {
+    for (const timer of this.fractalTimers) clearInterval(timer);
+    this.fractalTimers = [];
+
+    for (const [name, area] of Object.entries(this.layout?.areas ?? {})) {
+      if (area.type !== 'fractal' || !area.enabled || area.intervalMins <= 0) continue;
+      this.fractalTimers.push(
+        setInterval(() => {
+          this.setState(name, { seed: randomSeed() }, false).catch((error: unknown) =>
+            console.error(`Fractal "${name}" refresh failed:`, error),
+          );
+        }, area.intervalMins * 60_000),
+      );
+    }
   }
 
   // Merges a patch over an area's state, then hands old and new to that
   // area's processor. The processor - not the caller - decides whether the
   // panel is touched.
-  async setState(areaName: string, patch: TAreaState): Promise<RefreshResult | null> {
+  //
+  // `external` is false for the fractal timer: its rolls are not "written
+  // from outside", so a sync goes back to the area's saved seed - what the
+  // editor preview showed - instead of keeping the last rolled picture.
+  async setState(areaName: string, patch: TAreaState, external = true): Promise<RefreshResult | null> {
     const layout = this.layout;
     if (!layout) return null;
 
@@ -133,7 +164,11 @@ export class Context {
     const wasExternallySet = this.externallySet.has(areaName);
     const next: TAreaState = { ...previous, ...patch };
     this.state[areaName] = next;
-    this.externallySet.add(areaName);
+    if (external) this.externallySet.add(areaName);
+
+    // State is still kept for a disabled area, so enabling it later shows the
+    // latest value; it just never touches the panel meanwhile.
+    if (!area.enabled) return null;
 
     const outcome = processorFor(area.type)(next, previous, { areaName, area, context: this });
     if (!outcome.redraw) return null;
@@ -146,7 +181,7 @@ export class Context {
       // call with the same value sees "no change", skips the redraw, and the
       // update is lost until something else happens to repaint that area.
       this.state[areaName] = previous;
-      if (!wasExternallySet) this.externallySet.delete(areaName);
+      if (external && !wasExternallySet) this.externallySet.delete(areaName);
       throw error;
     }
   }

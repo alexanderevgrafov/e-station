@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 
 import type { FontFamilyInfo } from '../api.ts';
+import { FractalFields } from './FractalFields.tsx';
 import { ImageFields } from './ImageFields.tsx';
 import { NumberField, TextField } from './fields.tsx';
-import type { TArea, TImageArea, TTextArea } from '../../src/types.ts';
-import { H_ALIGNS } from '../../src/types.ts';
+import type { TArea, TAreaType, TFractalArea, TImageArea, TTextArea } from '../../src/types.ts';
+import { AREA_TYPES, H_ALIGNS } from '../../src/types.ts';
 
 interface Props {
   name: string;
@@ -86,6 +87,27 @@ export function AreaForm({ name, area, existing, fonts, onChange, onRename, onBr
       </form>
 
       <div className="fields">
+        <label className="field">
+          <span>Type</span>
+          <select value={area.type} onChange={(e) => patch({ type: e.target.value as TAreaType })}>
+            {AREA_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Enabled</span>
+          <input type="checkbox" checked={area.enabled} onChange={(e) => patch({ enabled: e.target.checked })} />
+        </label>
+      </div>
+      <p className="hint">
+        Changing the type keeps the geometry (and dither/bias where both types have them); settings the new type does
+        not use are dropped. A disabled area is not drawn on the panel.
+      </p>
+
+      <div className="fields">
         <NumberField label="x" value={area.x} step={8} onCommit={(x) => patch({ x })} />
         <NumberField label="y" value={area.y} onCommit={(y) => patch({ y })} />
         <NumberField label="width" value={area.w} step={8} onCommit={(w) => patch({ w })} />
@@ -142,6 +164,8 @@ export function AreaForm({ name, area, existing, fonts, onChange, onRename, onBr
       )}
 
       {area.type === 'image' && <ImageFields area={area as TImageArea} onChange={onChange} />}
+
+      {area.type === 'fractal' && <FractalFields area={area as TFractalArea} onChange={onChange} />}
 
       {area.type === 'svg' && <p className="hint">SVG is deliberately unimplemented for now.</p>}
 

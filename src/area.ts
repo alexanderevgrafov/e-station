@@ -3,15 +3,15 @@ import type {
   TAreaState,
   TAreaType,
   TDither,
+  TFractalKind,
   TGlobal,
   THAlign,
   TJsonObject,
   TMeasure,
   TSizeAxis,
-  TTextArea,
   TUnit,
 } from './types.ts';
-import { AREA_TYPES, DITHERS, H_ALIGNS, SIZE_AXES, UNITS } from './types.ts';
+import { AREA_TYPES, DITHERS, FRACTAL_KINDS, H_ALIGNS, SIZE_AXES, UNITS } from './types.ts';
 
 // Pure area rules, shared with the browser: geometry, z-ordering, overlap
 // derivation, defaults and normalization. Nothing here may import node
@@ -82,7 +82,10 @@ export function computeOverlapped(areas: Record<string, TArea>): Record<string, 
 
   for (const [name, area] of entries) {
     out[name] = entries
-      .filter(([other, otherArea]) => other !== name && otherArea.z > area.z && rectsOverlap(area, otherArea))
+      .filter(
+        ([other, otherArea]) =>
+          other !== name && otherArea.enabled && otherArea.z > area.z && rectsOverlap(area, otherArea),
+      )
       .sort(([, a], [, b]) => a.z - b.z)
       .map(([other]) => other);
   }
@@ -148,7 +151,7 @@ export function defaultArea(type: TAreaType, global: TGlobal, z: number): TArea 
     { x: 0, y: 0, w: Math.min(160, global.screenWidth), h: Math.min(80, global.screenHeight) },
     global,
   );
-  const common = { ...geometry, z, overlapped: [] };
+  const common = { ...geometry, z, enabled: true, overlapped: [] };
 
   if (type === 'text') {
     return { ...common, type, text: 'Text', font: 'Ubuntu', fontSize: 32, fontWeight: 'normal', align: 'center' };
@@ -168,6 +171,9 @@ export function defaultArea(type: TAreaType, global: TGlobal, z: number): TArea 
       bias: 0,
     };
   }
+  if (type === 'fractal') {
+    return { ...common, type, kind: 'random', intervalMins: 10, seed: 1, outerWhite: 50, whiteCutoff: 25, negative: false, dither: 'threshold', bias: 0 };
+  }
   return { ...common, type };
 }
 
@@ -175,6 +181,11 @@ export function defaultArea(type: TAreaType, global: TGlobal, z: number): TArea 
 // wrong-typed fields fall back to a default rather than throwing, so one bad
 // hand-edit costs that field instead of the whole layout.
 export function normalizeArea(raw: unknown, global: TGlobal, z: number): TArea {
+  const enabled = typeof raw === 'object' && raw !== null && (raw as TJsonObject)['enabled'] === false ? false : true;
+  return { ...normalizeByType(raw, global, z), enabled };
+}
+
+function normalizeByType(raw: unknown, global: TGlobal, z: number): TArea {
   const source: TJsonObject = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as TJsonObject) : {};
   const type: TAreaType = isAreaType(source['type']) ? source['type'] : 'text';
   const base = defaultArea(type, global, num(source['z'], z));
@@ -219,14 +230,34 @@ export function normalizeArea(raw: unknown, global: TGlobal, z: number): TArea {
     };
   }
 
+  if (base.type === 'fractal') {
+    return {
+      ...base,
+      ...geometry,
+      overlapped,
+      kind: oneOf<TFractalKind>(source['kind'], FRACTAL_KINDS, base.kind),
+      intervalMins: Math.max(0, Math.min(24 * 60, num(source['intervalMins'], base.intervalMins))),
+      seed: Math.max(0, Math.trunc(num(source['seed'], base.seed))),
+      outerWhite: Math.max(0, Math.min(100, num(source['outerWhite'], base.outerWhite))),
+      whiteCutoff: Math.max(0, Math.min(100, num(source['whiteCutoff'], base.whiteCutoff))),
+      negative: typeof source['negative'] === 'boolean' ? source['negative'] : base.negative,
+      dither: oneOf<TDither>(source['dither'], DITHERS, base.dither),
+      bias: Math.max(-128, Math.min(128, num(source['bias'], base.bias))),
+    };
+  }
+
   return { ...base, ...geometry, overlapped };
 }
 
 // The state an area starts with. Text seeds from its default text, so a
-// layout renders something sensible before anything calls /intake; image and
-// svg carry no state yet.
+// layout renders something sensible before anything calls /intake; fractal
+// starts at its saved seed; image and svg carry no state yet.
 export function defaultStateFor(area: TArea): TAreaState {
-  return area.type === 'text' ? { text: (area as TTextArea).text } : {};
+  if (area.type === 'text') return { text: area.text };
+  // The area's own saved seed: the editor previews it, and it is what shows
+  // after a sync, so preview and panel agree.
+  if (area.type === 'fractal') return { seed: area.seed };
+  return {};
 }
 
 export function defaultLayoutState(areas: Record<string, TArea>): Record<string, TAreaState> {

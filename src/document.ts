@@ -177,6 +177,33 @@ export function createLayout(store: TStore, name: string): TStore {
   });
 }
 
+// "Main" -> "Main 2", "Main 3", ... A trailing counter is stripped first so
+// cloning a clone doesn't produce "Main 2 2".
+export function clonedLayoutName(store: TStore, from: string): string {
+  const stem = from.replace(/ \d+$/, '');
+  for (let n = 2; n < 1000; n += 1) {
+    const candidate = `${stem} ${n}`;
+    if (!store.layouts[candidate] && isValidName(candidate)) return candidate;
+  }
+  throw new DocumentError(`could not find a free name based on "${from}"`);
+}
+
+// Deep copy of a layout - settings and every area, with z and overlap intact.
+// Goes right after the original in the list.
+export function cloneLayout(store: TStore, from: string, to?: string): TStore {
+  if (to !== undefined && !isValidName(to)) throw new DocumentError(`layout ${NAME_RULE}`);
+  return edit(store, (draft) => {
+    const source = requireLayout(draft, from);
+    const name = to ?? clonedLayoutName(draft, from);
+    if (draft.layouts[name]) throw new DocumentError(`layout "${name}" already exists`, 409);
+    draft.layouts = Object.fromEntries(
+      Object.entries(draft.layouts).flatMap<[string, TLayout]>(([key, value]) =>
+        key === from ? [[key, value], [name, structuredClone(source)]] : [[key, value]],
+      ),
+    );
+  });
+}
+
 export function setLayoutSettings(store: TStore, name: string, settings: unknown): TStore {
   const next = asJsonObject(settings, 'settings');
   return edit(store, (draft) => {
@@ -294,10 +321,9 @@ export function cloneArea(store: TStore, layoutName: string, from: string, to?: 
     const name = to ?? uniqueAreaName(layout.areas, from);
     if (layout.areas[name]) throw new DocumentError(`area "${name}" already exists`, 409);
 
-    // Offset so the copy is visibly its own box rather than sitting exactly
-    // under the original, and put it on top.
-    const nudged = normalizeGeometry({ ...source, x: source.x + X_ALIGN, y: source.y + X_ALIGN }, draft.global);
-    layout.areas[name] = { ...source, ...nudged, z: nextZ(layout.areas), overlapped: [] };
+    // Same place as the original, on top of it: the copy is selected right
+    // away, and moving it is one drag.
+    layout.areas[name] = { ...source, z: nextZ(layout.areas), overlapped: [] };
     layout.areas = withOverlapped(layout.areas);
   });
 }

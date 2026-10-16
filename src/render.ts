@@ -1,8 +1,9 @@
 import type { CanvasRenderingContext2D } from 'canvas';
 
-import type { TArea, TAreaState, TGlobal, TImageArea, TLayout, TLayoutState, TMeasure, TTextArea } from './types.ts';
+import type { TArea, TAreaState, TFractalArea, TGlobal, TImageArea, TLayout, TLayoutState, TMeasure, TTextArea } from './types.ts';
 import { byZ } from './area.ts';
 import { dither } from './dither.ts';
+import { fractalGray } from './fractal.ts';
 import type { ImageBank } from './images.ts';
 
 // Draws a layout onto a node-canvas context. Pure with respect to the panel -
@@ -93,6 +94,44 @@ function drawImageArea(
   return true;
 }
 
+// Seeds come from /intake as strings and from the timer as numbers.
+export function seedOf(state: TAreaState): number {
+  const value = Number(state['seed']);
+  return Number.isFinite(value) ? Math.trunc(value) >>> 0 : 1;
+}
+
+// The last dithered fractal, kept so the repaints an overlapping neighbour
+// causes do not recompute a picture that has not changed. One entry is
+// enough: the timer replaces the picture, it never alternates between two.
+const fractalCache = new Map<string, Uint8ClampedArray>();
+
+function drawFractalArea(ctx: CanvasRenderingContext2D, area: TFractalArea, state: TAreaState, name = ''): void {
+  const seed = seedOf(state);
+  const key = [name, seed, area.kind, area.w, area.h, area.outerWhite, area.whiteCutoff, area.negative, area.dither, area.bias].join('|');
+
+  let pixels = fractalCache.get(key);
+  if (!pixels) {
+    const gray = fractalGray(seed, area.kind, area.w, area.h, area.outerWhite, area.whiteCutoff);
+    const rgba = new Uint8ClampedArray(area.w * area.h * 4);
+    for (let p = 0; p < gray.length; p += 1) {
+      const v = area.negative ? 255 - gray[p]! : gray[p]!;
+      rgba[p * 4] = v;
+      rgba[p * 4 + 1] = v;
+      rgba[p * 4 + 2] = v;
+      rgba[p * 4 + 3] = 255;
+    }
+    dither(rgba, area.w, area.h, area.dither, area.bias);
+    pixels = rgba;
+    // Entries for this area's earlier pictures are dead weight.
+    for (const old of fractalCache.keys()) if (old.startsWith(`${name}|`)) fractalCache.delete(old);
+    fractalCache.set(key, pixels);
+  }
+
+  const image = ctx.createImageData(area.w, area.h);
+  image.data.set(pixels);
+  ctx.putImageData(image, area.x, area.y);
+}
+
 function drawPlaceholder(ctx: CanvasRenderingContext2D, area: TArea, label: string): void {
   ctx.strokeStyle = BLACK;
   ctx.lineWidth = 1;
@@ -117,6 +156,7 @@ export function drawArea(
   area: TArea,
   state: TAreaState,
   images: ImageBank,
+  name = '',
 ): void {
   clearArea(ctx, area);
 
@@ -131,6 +171,9 @@ export function drawArea(
       break;
     case 'svg':
       drawPlaceholder(ctx, area, 'svg');
+      break;
+    case 'fractal':
+      drawFractalArea(ctx, area, state, name);
       break;
   }
 }
@@ -147,8 +190,8 @@ export function drawAreas(
 ): void {
   const wanted = new Set(names);
   for (const [name, area] of byZ(layout.areas)) {
-    if (!wanted.has(name)) continue;
-    drawArea(ctx, area, state[name] ?? {}, images);
+    if (!wanted.has(name) || !area.enabled) continue;
+    drawArea(ctx, area, state[name] ?? {}, images, name);
   }
 }
 

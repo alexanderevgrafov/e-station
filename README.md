@@ -156,13 +156,24 @@ Edited through forms, and by dragging them on the screen preview.
   whole set goes out as **one** partial window, not several: two independent
   partial windows back to back reliably left one of them blank on this panel
   (see the sticky-window section).
-- **Types.** `text` and `image` are implemented; `svg` renders a dashed
+- **Types.** `text`, `image` and `fractal` are implemented; `svg` renders a dashed
   placeholder and is deliberately unimplemented.
 - **Fonts** come from `src/fonts.ts`, which scans the font directories
   (`ESTATION_FONT_DIRS`, colon-separated, or platform defaults), reads each
   file's real family and weight with fontkit, and registers it with
   node-canvas. The editor offers that list, and serves the font files so its
   own preview boxes use the same family the panel will.
+
+### Fractal areas
+
+A `fractal` area draws generated black-and-white art (Julia or Mandelbrot,
+`kind`: `random | julia | mandelbrot`) and swaps in a new picture every
+`intervalMins` minutes (0 = timer off). The picture is a pure function of the
+area's state `seed`, so overlap repaints show the same art; the timer just
+writes a random seed through the normal state path, and the processor repaints
+only that area. `dither` and `bias` work as for image areas. Pick a picture by
+hand with `/intake/<area>?seed=42`. The editor preview always shows seed 1.
+Timers are rebuilt on every Sync & Save; a fresh seed is rolled at boot.
 
 ### Image areas
 
@@ -408,14 +419,41 @@ caused the freeze was gone by the time it could be inspected. Fixed for next
 time:
 
 - **Persistent journald** (`Storage=persistent` in `/etc/systemd/journald.conf`,
-  capped at `SystemMaxUse=200M`) - logs now survive a reboot instead of living
-  only in the volatile in-memory buffer.
+  capped at `SystemMaxUse=200M`).
+- **DietPi-RAMlog disabled** (2026-09-28) - DietPi mounts `/var/log` as a 50M
+  tmpfs and wipes it hourly by default, which silently defeated the persistent
+  journal and the heartbeat log until then. Now: tmpfs line commented out in
+  `/etc/fstab`, `dietpi-ramlog.service` disabled, `INDEX_LOGGING=0` in
+  `/boot/dietpi/.installed`. Backups: `/etc/fstab.bak-2026-09-28`,
+  `/root/dietpi.installed.bak-2026-09-28`.
 - **Hardware watchdog** (`RuntimeWatchdogSec=15s` in `/etc/systemd/system.conf`)
-  - if the OS/kernel wedges again, the board auto-reboots instead of sitting
-    hung until someone notices and power-cycles it by hand.
-- **Heartbeat cron**, every 2 minutes, hitting `/api/status` and appending to
-  `/var/log/e-station-heartbeat.log` (log-rotated weekly) - gives a timestamped
-  record of the last known-good check, independent of the journal.
+  - reboots only if the kernel/systemd itself stops. It did *not* fire in the
+  2026-09-28 hang (board dead from ~00:12 to ~09:30), so that hang left
+  systemd alive while networking and cron (no hourly `fake-hwclock` save
+  after 23:17) had stopped.
+- **Heartbeat cron**, every minute (`/usr/local/bin/e-station-heartbeat.sh`),
+  appending to `/var/log/e-station-heartbeat.log`:
+  `<ts> app=OK|FAIL gw=ok|FAIL wlan=<operstate> load=... avail=..M swapused=..M D=[blocked procs]`.
+  `gw` is a TCP check to the router's port 53 (the router ignores ping from the
+  board's side). Not rotated (logrotate isn't installed), ~80MB/year.
+
+After the next hang: `journalctl -b -1 -e` and the heartbeat log's last lines
+show which failed first (app, Wi-Fi, memory, or I/O).
+
+### Root cause: weekly `fstrim` (found 2026-10-05)
+
+Both hangs (2026-09-28 and 2026-10-05) were Monday just after midnight - the
+stock `fstrim.timer` (`OnCalendar=weekly`, up to 100 min random delay). On
+2026-10-05 `/var/lib/systemd/timers/stamp-fstrim.timer` read `00:10:06`, the
+minute the clock froze, while the journal and heartbeat stopped at `00:09:01`
+with nothing logged: a discard on this SD card freezes all block I/O, so log
+lines die in RAM, and the kernel and systemd stay up, so the watchdog never
+fires. Reproduced by hand: `fstrim -v /` at 10:19:29 hung the board within
+~30s, and the journal ends that same second.
+
+Fix: `systemctl disable --now fstrim.timer` and `systemctl mask fstrim.service`.
+Don't run `fstrim` on this card. A small, lightly written SD card loses
+nothing from never trimming.
 
 ## Globals
 

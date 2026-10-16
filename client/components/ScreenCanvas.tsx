@@ -4,12 +4,15 @@ import { byZ, normalizeGeometry, X_ALIGN } from '../../src/area.ts';
 import type { Rect } from '../../src/area.ts';
 import type { TArea, TAreaType, TGlobal, TLayout } from '../../src/types.ts';
 import { AREA_TYPES } from '../../src/types.ts';
+import { passesFilter } from './AreaList.tsx';
+import type { TAreaFilter } from './AreaList.tsx';
 
 interface Props {
   layout: TLayout;
   global: TGlobal;
   previewUrl: string | null; // server render of the *draft*, see usePreview
   selected: string | null;
+  filter: TAreaFilter;
   onSelect: (name: string | null) => void;
   onMove: (name: string, rect: Rect) => Promise<void>;
   onCreate: (name: string, type: TAreaType) => Promise<void>;
@@ -30,6 +33,7 @@ export function ScreenCanvas({
   global,
   previewUrl,
   selected,
+  filter,
   onSelect,
   onMove,
   onCreate,
@@ -118,13 +122,15 @@ export function ScreenCanvas({
       >
         {previewUrl && <img className="screen-render" src={previewUrl} alt="panel render" draggable={false} />}
 
-        {byZ(layout.areas).map(([name, area]) => {
+        {byZ(layout.areas)
+          .filter(([name, area]) => name === selected || passesFilter(area.enabled, filter))
+          .map(([name, area]) => {
           const rect = rectOf(name, area);
           const isSelected = name === selected;
           return (
             <div
               key={name}
-              className={isSelected ? 'area-box selected' : 'area-box'}
+              className={`area-box${isSelected ? ' selected' : ''}${area.enabled ? '' : ' disabled'}`}
               style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, zIndex: area.z }}
               onPointerDown={(event) => beginDrag(event, 'move', name, area)}
             >

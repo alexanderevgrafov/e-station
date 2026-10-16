@@ -12,8 +12,11 @@ set -euo pipefail
 
 HOST="${EPD_DEPLOY_HOST:-192.168.233.109}"
 USER="${EPD_DEPLOY_USER:-root}"
+PORT="${EPD_DEPLOY_PORT:-1113}"
 REMOTE_DIR="${EPD_DEPLOY_DIR:-/home/dietpi/e-station}"
 TARGET="${USER}@${HOST}"
+# The device's sshd is on a non-default port (see README, "Device access").
+SSH=(ssh -p "$PORT")
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -28,7 +31,7 @@ echo "==> Syncing ${PROJECT_DIR}/ -> ${TARGET}:${REMOTE_DIR}/"
 # `data` is excluded rather than merged: the layouts document is written on
 # the device by the editor, so letting --delete near it would wipe real edits
 # on every deploy.
-rsync -avz --delete \
+rsync -avz --delete -e "ssh -p ${PORT}" \
   --exclude '.git' \
   --exclude '.idea' \
   --exclude '.DS_Store' \
@@ -41,6 +44,6 @@ rsync -avz --delete \
   "$PROJECT_DIR"/ "${TARGET}:${REMOTE_DIR}/"
 
 echo "==> Installing dependencies, rebuilding epd_util, restarting service on device"
-ssh "$TARGET" "cd '${REMOTE_DIR}' && yarn install --production && bash post-deployment-script.sh"
+"${SSH[@]}" "$TARGET" "cd '${REMOTE_DIR}' && yarn install --production && bash post-deployment-script.sh"
 
 echo "==> Deploy complete"

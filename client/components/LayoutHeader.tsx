@@ -5,10 +5,11 @@ interface Props {
   name: string;
   existing: string[];
   onRename: (to: string) => Promise<void>;
+  onClone: () => Promise<void>;
   onDelete: () => Promise<void>;
 }
 
-export function LayoutHeader({ name, existing, onRename, onDelete }: Props) {
+export function LayoutHeader({ name, existing, onRename, onClone, onDelete }: Props) {
   const [draft, setDraft] = useState(name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +55,10 @@ export function LayoutHeader({ name, existing, onRename, onDelete }: Props) {
         />
         <button type="submit" disabled={!canRename}>
           Rename
+        </button>
+
+        <button type="button" className="ghost" disabled={busy} onClick={() => void run(onClone).then(() => setBusy(false))}>
+          Clone
         </button>
 
         {confirming ? (

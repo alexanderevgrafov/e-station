@@ -10,7 +10,7 @@ export type TJsonObject = { [key: string]: TJsonValue };
 // `as const` arrays rather than enums: Node strips types, it does not compile
 // them, so an enum would emit no runtime object. See tsconfig's
 // erasableSyntaxOnly.
-export const AREA_TYPES = ['text', 'image', 'svg'] as const;
+export const AREA_TYPES = ['text', 'image', 'svg', 'fractal'] as const;
 export type TAreaType = (typeof AREA_TYPES)[number];
 
 export const H_ALIGNS = ['left', 'center', 'right'] as const;
@@ -23,6 +23,10 @@ export type TUnit = (typeof UNITS)[number];
 // aspect ratio, which is never distorted.
 export const SIZE_AXES = ['width', 'height'] as const;
 export type TSizeAxis = (typeof SIZE_AXES)[number];
+
+// What a fractal area draws. 'random' lets each new seed pick one of the two.
+export const FRACTAL_KINDS = ['random', 'julia', 'mandelbrot'] as const;
+export type TFractalKind = (typeof FRACTAL_KINDS)[number];
 
 // Ordered matrices first (cheap, tileable, no error propagation), then the
 // error-diffusion family. See src/dither.ts for what each one looks like.
@@ -54,6 +58,9 @@ export interface TAreaCommon {
   // Unique across a layout, higher draws later. Assigned max+1 on create and
   // otherwise left alone; "Bring to front" is the only thing that changes it.
   z: number;
+  // A disabled area stays in the layout (and in the editor) but is not drawn,
+  // not repainted, and does not count as sitting on top of anything.
+  enabled: boolean;
   // Derived, never edited by hand: the areas that intersect this one *and*
   // sit above it. Recomputed on every write. Repainting this area has to be
   // followed by repainting everything listed here, or its fresh pixels would
@@ -96,7 +103,35 @@ export interface TSvgArea extends TAreaCommon {
   type: 'svg';
 }
 
-export type TArea = TTextArea | TImageArea | TSvgArea;
+// Generated art: a black-and-white fractal, re-rolled on a timer. The picture
+// is a pure function of the area's state `seed` (plus the fields below), so
+// repaints caused by overlapping areas show the same picture, and /intake can
+// pick one by hand with ?seed=N.
+export interface TFractalArea extends TAreaCommon {
+  type: 'fractal';
+  kind: TFractalKind;
+  // Minutes between new seeds. 0 turns the timer off (the seed then only
+  // changes through /intake).
+  intervalMins: number;
+  // The picture shown in the editor preview and after Sync & Save, until the
+  // timer (or /intake) replaces it. Randomize in the editor just rolls this.
+  seed: number;
+  // 0..100: how gradually the pattern outside the set fades to white with
+  // distance from it. 0 keeps the full banding everywhere; 100 leaves ink
+  // only close to the set's edge.
+  outerWhite: number;
+  // 0..100: the escape speed past which everything is plain white, hard.
+  // Inside the set is black, just outside it the ribbons; pixels that escape
+  // faster than the cutoff are white. 0 = no cutoff, 100 = only the very
+  // slowest escapes keep their ribbons.
+  whiteCutoff: number;
+  // Draw in reverted colours.
+  negative: boolean;
+  dither: TDither;
+  bias: number;
+}
+
+export type TArea = TTextArea | TImageArea | TSvgArea | TFractalArea;
 
 // Live per-area values, keyed by area name. Not persisted - this is what
 // /intake writes and what processors diff.

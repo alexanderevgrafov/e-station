@@ -7,6 +7,8 @@ import { JsonPanel } from './components/JsonPanel.tsx';
 import { LayoutPicker } from './components/LayoutPicker.tsx';
 import { ScreenCanvas } from './components/ScreenCanvas.tsx';
 import { LayoutHeader } from './components/LayoutHeader.tsx';
+import { AreaList } from './components/AreaList.tsx';
+import type { TAreaFilter } from './components/AreaList.tsx';
 import { AreaForm } from './components/AreaForm.tsx';
 import { SyncBar } from './components/SyncBar.tsx';
 import { mergeSettings } from '../src/settings.ts';
@@ -24,6 +26,7 @@ export function App() {
   const [saved, setSaved] = useState<TStore | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
+  const [filter, setFilter] = useState<TAreaFilter>('all');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -142,6 +145,10 @@ export function App() {
               onRename={async (to) => {
                 if (edit((store) => doc.renameLayout(store, selected, to))) setSelected(to);
               }}
+              onClone={async () => {
+                const created = doc.clonedLayoutName(draft, selected);
+                if (edit((store) => doc.cloneLayout(store, selected))) setSelected(created);
+              }}
               onDelete={async () => {
                 if (edit((store) => doc.deleteLayout(store, selected))) setSelected(null);
               }}
@@ -157,6 +164,7 @@ export function App() {
                   global={draft.global}
                   previewUrl={previewUrl}
                   selected={selectedArea}
+                  filter={filter}
                   onSelect={setSelectedArea}
                   onMove={async (name, rect: Rect) => {
                     edit((store) => doc.updateArea(store, selected, name, rect));
@@ -168,6 +176,16 @@ export function App() {
               </div>
 
               <div className="workspace-side">
+                <AreaList
+                  layout={layout}
+                  selected={selectedArea}
+                  filter={filter}
+                  onFilter={setFilter}
+                  onSelect={setSelectedArea}
+                  onToggle={(name, enabled) => {
+                    edit((store) => doc.updateArea(store, selected, name, { enabled }));
+                  }}
+                />
                 {area && selectedArea !== null ? (
                   <AreaForm
                     name={selectedArea}
