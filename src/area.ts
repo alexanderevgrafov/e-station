@@ -3,6 +3,7 @@ import type {
   TAreaState,
   TAreaType,
   TDither,
+  TBackdrop,
   TFractalKind,
   TGlobal,
   THAlign,
@@ -11,7 +12,7 @@ import type {
   TSizeAxis,
   TUnit,
 } from './types.ts';
-import { AREA_TYPES, DITHERS, FRACTAL_KINDS, H_ALIGNS, SIZE_AXES, UNITS } from './types.ts';
+import { AREA_TYPES, BACKDROPS, DITHERS, FRACTAL_KINDS, H_ALIGNS, SIZE_AXES, UNITS } from './types.ts';
 
 // Pure area rules, shared with the browser: geometry, z-ordering, overlap
 // derivation, defaults and normalization. Nothing here may import node
@@ -96,6 +97,11 @@ export function computeOverlapped(areas: Record<string, TArea>): Record<string, 
 // Repainting an area means repainting everything stacked on top of it, which
 // `overlapped` already lists directly. Still transitive: an area pulled in
 // this way can itself have areas above it.
+//
+// The exception is a halo text area: it does not wipe its rectangle, so its
+// old glyphs would survive a repaint. It therefore also pulls in the areas
+// *below* it that it overlaps, which redraw their own pixels over the old
+// text before it is drawn again.
 export function withAreasAbove(areas: Record<string, TArea>, seed: string[]): string[] {
   const included = new Set<string>();
   const queue = [...seed];
@@ -109,6 +115,14 @@ export function withAreasAbove(areas: Record<string, TArea>, seed: string[]): st
 
     for (const other of area.overlapped) {
       if (!included.has(other)) queue.push(other);
+    }
+
+    if (area.type === 'text' && area.backdrop === 'halo') {
+      for (const [other, otherArea] of Object.entries(areas)) {
+        if (otherArea.enabled && otherArea.z < area.z && rectsOverlap(area, otherArea) && !included.has(other)) {
+          queue.push(other);
+        }
+      }
     }
   }
 
@@ -133,6 +147,27 @@ function str(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
 }
 
+// "H:MM" / "HH:MM" -> zero-padded "HH:MM"; '' (or junk) means unset.
+function clock(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  if (value === '') return '';
+  const m = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+  if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) return fallback;
+  return `${m[1]!.padStart(2, '0')}:${m[2]}`;
+}
+
+// Whether `now` falls in the area's quiet period. The period may wrap
+// midnight (23:00 - 05:00); from == to is empty, not the whole day.
+export function inQuietHours(area: { quietFrom: string; quietTo: string }, now: Date): boolean {
+  if (!area.quietFrom || !area.quietTo) return false;
+  const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
+  const from = minutes(area.quietFrom);
+  const to = minutes(area.quietTo);
+  const at = now.getHours() * 60 + now.getMinutes();
+  if (from === to) return false;
+  return from < to ? at >= from && at < to : at >= from || at < to;
+}
+
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
   return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
 }
@@ -154,7 +189,7 @@ export function defaultArea(type: TAreaType, global: TGlobal, z: number): TArea 
   const common = { ...geometry, z, enabled: true, overlapped: [] };
 
   if (type === 'text') {
-    return { ...common, type, text: 'Text', font: 'Ubuntu', fontSize: 32, fontWeight: 'normal', align: 'center' };
+    return { ...common, type, text: 'Text', font: 'Ubuntu', fontSize: 32, fontWeight: 'normal', align: 'center', backdrop: 'clear', haloRadius: 4 };
   }
   if (type === 'image') {
     return {
@@ -172,7 +207,7 @@ export function defaultArea(type: TAreaType, global: TGlobal, z: number): TArea 
     };
   }
   if (type === 'fractal') {
-    return { ...common, type, kind: 'random', intervalMins: 10, seed: 1, outerWhite: 50, whiteCutoff: 25, negative: false, dither: 'threshold', bias: 0 };
+    return { ...common, type, kind: 'random', intervalMins: 10, quietFrom: '', quietTo: '', maxZoom: 3.5, seed: 1, outerWhite: 50, whiteCutoff: 25, negative: false, dither: 'threshold', bias: 0 };
   }
   return { ...common, type };
 }
@@ -211,6 +246,8 @@ function normalizeByType(raw: unknown, global: TGlobal, z: number): TArea {
       fontSize: Math.max(1, num(source['fontSize'], base.fontSize)),
       fontWeight: str(source['fontWeight'], base.fontWeight),
       align: asHAlign(source['align']),
+      backdrop: oneOf<TBackdrop>(source['backdrop'], BACKDROPS, base.backdrop),
+      haloRadius: Math.max(0, Math.min(64, num(source['haloRadius'], base.haloRadius))),
     };
   }
 
@@ -237,6 +274,9 @@ function normalizeByType(raw: unknown, global: TGlobal, z: number): TArea {
       overlapped,
       kind: oneOf<TFractalKind>(source['kind'], FRACTAL_KINDS, base.kind),
       intervalMins: Math.max(0, Math.min(24 * 60, num(source['intervalMins'], base.intervalMins))),
+      quietFrom: clock(source['quietFrom'], base.quietFrom),
+      quietTo: clock(source['quietTo'], base.quietTo),
+      maxZoom: Math.max(0.5, Math.min(7, num(source['maxZoom'], base.maxZoom))),
       seed: Math.max(0, Math.trunc(num(source['seed'], base.seed))),
       outerWhite: Math.max(0, Math.min(100, num(source['outerWhite'], base.outerWhite))),
       whiteCutoff: Math.max(0, Math.min(100, num(source['whiteCutoff'], base.whiteCutoff))),

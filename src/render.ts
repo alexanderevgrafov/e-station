@@ -13,6 +13,10 @@ import type { ImageBank } from './images.ts';
 const WHITE = '#FFFFFF';
 const BLACK = '#000000';
 
+// Text ink and its halo are each other's negative.
+const TEXT_INK = BLACK;
+const HALO_INK = WHITE;
+
 // State arrives from /intake and from POST bodies, so a number or boolean is
 // entirely possible. Render it rather than silently falling back to the
 // area's default, which would show stale text and look like a lost update.
@@ -29,7 +33,7 @@ function drawText(ctx: CanvasRenderingContext2D, area: TTextArea, state: TAreaSt
   const text = textOf(state['text'], area.text);
   if (text === '') return;
 
-  ctx.fillStyle = BLACK;
+  ctx.fillStyle = TEXT_INK;
   ctx.font = `${area.fontWeight} ${area.fontSize}px "${area.font}", serif`;
   ctx.textBaseline = 'middle';
   ctx.textAlign = area.align;
@@ -43,6 +47,16 @@ function drawText(ctx: CanvasRenderingContext2D, area: TTextArea, state: TAreaSt
   ctx.beginPath();
   ctx.rect(area.x, area.y, area.w, area.h);
   ctx.clip();
+  if (area.backdrop === 'halo' && area.haloRadius > 0) {
+    // A round-joined stroke is the glyph dilated by half its width, so the
+    // line is twice the radius. Painted first; the fill then covers the half
+    // of the stroke that lies inside the glyph.
+    ctx.strokeStyle = HALO_INK;
+    ctx.lineWidth = area.haloRadius * 2;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeText(text, x, y);
+  }
   ctx.fillText(text, x, y);
   ctx.restore();
 }
@@ -107,11 +121,11 @@ const fractalCache = new Map<string, Uint8ClampedArray>();
 
 function drawFractalArea(ctx: CanvasRenderingContext2D, area: TFractalArea, state: TAreaState, name = ''): void {
   const seed = seedOf(state);
-  const key = [name, seed, area.kind, area.w, area.h, area.outerWhite, area.whiteCutoff, area.negative, area.dither, area.bias].join('|');
+  const key = [name, seed, area.kind, area.w, area.h, area.outerWhite, area.whiteCutoff, area.maxZoom, area.negative, area.dither, area.bias].join('|');
 
   let pixels = fractalCache.get(key);
   if (!pixels) {
-    const gray = fractalGray(seed, area.kind, area.w, area.h, area.outerWhite, area.whiteCutoff);
+    const gray = fractalGray(seed, area.kind, area.w, area.h, area.outerWhite, area.whiteCutoff, area.maxZoom);
     const rgba = new Uint8ClampedArray(area.w * area.h * 4);
     for (let p = 0; p < gray.length; p += 1) {
       const v = area.negative ? 255 - gray[p]! : gray[p]!;
@@ -158,7 +172,8 @@ export function drawArea(
   images: ImageBank,
   name = '',
 ): void {
-  clearArea(ctx, area);
+  // A halo text area is the one thing that draws over what is below it.
+  if (!(area.type === 'text' && area.backdrop === 'halo')) clearArea(ctx, area);
 
   switch (area.type) {
     case 'text':

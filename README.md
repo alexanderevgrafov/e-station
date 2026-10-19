@@ -173,6 +173,10 @@ area's state `seed`, so overlap repaints show the same art; the timer just
 writes a random seed through the normal state path, and the processor repaints
 only that area. `dither` and `bias` work as for image areas. Pick a picture by
 hand with `/intake/<area>?seed=42`. The editor preview always shows seed 1.
+`quietFrom` / `quietTo` (local `HH:MM`, may wrap midnight) stop the timer rolling
+new pictures in that period. `maxZoom` caps how deep Mandelbrot views zoom
+(power of ten, default 3.5); a view with almost no edges (blank or one smooth
+blob edge) is zoomed back out in half-steps until it has some.
 Timers are rebuilt on every Sync & Save; a fresh seed is rolled at boot.
 
 ### Image areas

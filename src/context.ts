@@ -4,7 +4,7 @@ import type { RefreshResult } from './panel.ts';
 import { loadFonts } from './fonts.ts';
 import { preload } from './images.ts';
 import type { ImageBank } from './images.ts';
-import { defaultLayoutState, defaultStateFor } from './area.ts';
+import { defaultLayoutState, defaultStateFor, inQuietHours } from './area.ts';
 import { processorFor } from './processors.ts';
 import { deepMerge } from './settings.ts';
 import type { TAreaState, TGlobal, TJsonObject, TLayout, TLayoutState, TStore } from './types.ts';
@@ -138,6 +138,7 @@ export class Context {
       if (area.type !== 'fractal' || !area.enabled || area.intervalMins <= 0) continue;
       this.fractalTimers.push(
         setInterval(() => {
+          if (inQuietHours(area, new Date())) return;
           this.setState(name, { seed: randomSeed() }, false).catch((error: unknown) =>
             console.error(`Fractal "${name}" refresh failed:`, error),
           );

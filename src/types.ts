@@ -16,6 +16,12 @@ export type TAreaType = (typeof AREA_TYPES)[number];
 export const H_ALIGNS = ['left', 'center', 'right'] as const;
 export type THAlign = (typeof H_ALIGNS)[number];
 
+// What a text area does with the pixels under it. 'clear' wipes its rectangle
+// to white first; 'halo' keeps whatever the layers below drew and only
+// outlines the glyphs in paper colour, so the text stays legible on top of it.
+export const BACKDROPS = ['clear', 'halo'] as const;
+export type TBackdrop = (typeof BACKDROPS)[number];
+
 export const UNITS = ['px', '%'] as const;
 export type TUnit = (typeof UNITS)[number];
 
@@ -76,6 +82,10 @@ export interface TTextArea extends TAreaCommon {
   fontSize: number;
   fontWeight: string; // 'normal' | 'bold' | ... whatever the family offers
   align: THAlign;
+  backdrop: TBackdrop;
+  // Halo thickness in px, measured outward from the glyph edge. Only used by
+  // the 'halo' backdrop. The halo is clipped to the area, so leave room.
+  haloRadius: number;
 }
 
 // Placement inside the area follows CSS background-image, because that is
@@ -113,6 +123,13 @@ export interface TFractalArea extends TAreaCommon {
   // Minutes between new seeds. 0 turns the timer off (the seed then only
   // changes through /intake).
   intervalMins: number;
+  // Quiet period, local "HH:MM" (may wrap midnight, e.g. 23:00 - 05:00): the
+  // timer does not roll new seeds inside it. Either empty = no quiet period.
+  quietFrom: string;
+  quietTo: string;
+  // Deepest Mandelbrot zoom as a power of ten (3.5 = 10^3.5 times in). Zoom
+  // is also backed off when the picture would be mostly empty.
+  maxZoom: number;
   // The picture shown in the editor preview and after Sync & Save, until the
   // timer (or /intake) replaces it. Randomize in the editor just rolls this.
   seed: number;

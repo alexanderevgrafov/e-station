@@ -38,6 +38,8 @@ interface Params {
   halfHeight: number; // half the visible height, in complex-plane units
   rotation: number;
   maxIter: number;
+  // Mandelbrot zoom as a power of ten (0 for julia).
+  depth: number;
   freq: number;
   phase: number;
   // 0..1, how far the pattern fades to white with distance from the set.
@@ -48,8 +50,8 @@ interface Params {
 
 // The slider is log-scaled: escape speeds bunch up at the low end, so a
 // linear slider would spend nearly all its travel on the last few pixels.
-function paramsFor(seed: number, kind: TFractalKind, outerWhite: number, whiteCutoff: number): Params {
-  const params = rawParams(seed, kind);
+function paramsFor(seed: number, kind: TFractalKind, outerWhite: number, whiteCutoff: number, maxZoom: number): Params {
+  const params = rawParams(seed, kind, maxZoom);
   return {
     ...params,
     outer: outerWhite / 100,
@@ -57,7 +59,7 @@ function paramsFor(seed: number, kind: TFractalKind, outerWhite: number, whiteCu
   };
 }
 
-function rawParams(seed: number, kind: TFractalKind): Params {
+function rawParams(seed: number, kind: TFractalKind, maxZoom: number): Params {
   const rand = rng(seed);
   const julia = kind === 'julia' || (kind === 'random' && rand() < 0.5);
   const base = {
@@ -86,24 +88,25 @@ function rawParams(seed: number, kind: TFractalKind): Params {
       centerY: (rand() - 0.5) * 0.3,
       halfHeight: 1.1 / (1 + rand() * 1.5),
       maxIter: 140,
+      depth: 0,
     };
   }
 
   const [centerX, centerY] = MANDELBROT_SPOTS[Math.floor(rand() * MANDELBROT_SPOTS.length)]!;
-  const depth = 0.5 + rand() * 3; // zoom of 10^0.5 .. 10^3.5
-  return {
-    ...base,
-    julia,
-    centerX,
-    centerY,
-    halfHeight: 1.3 / 10 ** depth,
-    maxIter: Math.min(260, Math.round(90 + 45 * depth)),
-  };
+  // zoom of 10^0.5 .. 10^maxZoom (3.5 unless the area says otherwise)
+  const depth = MIN_DEPTH + rand() * Math.max(0, maxZoom - MIN_DEPTH);
+  return { ...base, julia, centerX, centerY, ...zoomed(depth) };
 }
 
-// Greyscale 0..255, one byte per pixel, and the share of pixels that never
-// escaped (the "interior").
-function render(w: number, h: number, p: Params): { gray: Uint8Array; interior: number } {
+const MIN_DEPTH = 0.5;
+
+function zoomed(depth: number): Pick<Params, 'depth' | 'halfHeight' | 'maxIter'> {
+  return { depth, halfHeight: 1.3 / 10 ** depth, maxIter: Math.min(260, Math.round(90 + 45 * depth)) };
+}
+
+// Greyscale 0..255, one byte per pixel, the share of pixels that never
+// escaped (the "interior"), and how much detail there is (see `detail`).
+function render(w: number, h: number, p: Params): { gray: Uint8Array; interior: number; detail: number } {
   const gray = new Uint8Array(w * h);
   const scale = (2 * p.halfHeight) / h;
   const cos = Math.cos(p.rotation);
@@ -157,7 +160,23 @@ function render(w: number, h: number, p: Params): { gray: Uint8Array; interior: 
     }
   }
 
-  return { gray, interior: interior / (w * h) };
+  return { gray, interior: interior / (w * h), detail: detail(gray, w, h) };
+}
+
+// Share of pixels whose black/white state differs from the right or lower
+// neighbour. Plain ink share is a poor "is this boring" test: a solid blob
+// edge is 10% ink and sparse filament dust is 3%. Measured on 200x120 views,
+// boring ones (empty, or one smooth edge) score under 1.3% here and
+// interesting ones, however sparse, 3% and up.
+function detail(gray: Uint8Array, w: number, h: number): number {
+  let edges = 0;
+  for (let y = 0; y < h - 1; y += 1) {
+    for (let x = 0; x < w - 1; x += 1) {
+      const dark = gray[y * w + x]! < 128;
+      if (dark !== gray[y * w + x + 1]! < 128 || dark !== gray[(y + 1) * w + x]! < 128) edges += 1;
+    }
+  }
+  return edges / (w * h);
 }
 
 function spread(gray: Uint8Array): number {
@@ -176,6 +195,19 @@ function spread(gray: Uint8Array): number {
 // still always means one picture.
 const ATTEMPTS = 6;
 
+// A zoomed-in Mandelbrot view can end up in a featureless patch. If its
+// detail is below this, zoom out in steps until it is not.
+const MIN_DETAIL = 0.02;
+const ZOOM_STEP = 0.5;
+
+function renderBackingOff(w: number, h: number, p: Params): ReturnType<typeof render> {
+  let result = render(w, h, p);
+  for (let depth = p.depth - ZOOM_STEP; !p.julia && result.detail < MIN_DETAIL && depth >= MIN_DEPTH; depth -= ZOOM_STEP) {
+    result = render(w, h, { ...p, ...zoomed(depth) });
+  }
+  return result;
+}
+
 export function fractalGray(
   seed: number,
   kind: TFractalKind,
@@ -183,12 +215,13 @@ export function fractalGray(
   h: number,
   outerWhite: number,
   whiteCutoff: number,
+  maxZoom = 3.5,
 ): Uint8Array {
   let best: Uint8Array | null = null;
   let bestSpread = -1;
 
   for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
-    const { gray, interior } = render(w, h, paramsFor((seed + attempt * 7919) >>> 0, kind, outerWhite, whiteCutoff));
+    const { gray, interior } = renderBackingOff(w, h, paramsFor((seed + attempt * 7919) >>> 0, kind, outerWhite, whiteCutoff, maxZoom));
     const score = interior > 0.7 ? 0 : spread(gray);
     if (score > 40) return gray;
     if (score > bestSpread) {

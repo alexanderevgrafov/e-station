@@ -5,7 +5,7 @@ import { FractalFields } from './FractalFields.tsx';
 import { ImageFields } from './ImageFields.tsx';
 import { NumberField, TextField } from './fields.tsx';
 import type { TArea, TAreaType, TFractalArea, TImageArea, TTextArea } from '../../src/types.ts';
-import { AREA_TYPES, H_ALIGNS } from '../../src/types.ts';
+import { AREA_TYPES, BACKDROPS, H_ALIGNS } from '../../src/types.ts';
 
 interface Props {
   name: string;
@@ -160,6 +160,27 @@ export function AreaForm({ name, area, existing, fonts, onChange, onRename, onBr
               </select>
             </label>
           </div>
+          <div className="fields">
+            <label className="field">
+              <span>Backdrop</span>
+              <select value={text.backdrop} onChange={(e) => patch({ backdrop: e.target.value } as Partial<TArea>)}>
+                {BACKDROPS.map((backdrop) => (
+                  <option key={backdrop} value={backdrop}>
+                    {backdrop}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {text.backdrop === 'halo' && (
+              <NumberField label="Halo px" value={text.haloRadius} onCommit={(haloRadius) => patch({ haloRadius } as Partial<TArea>)} />
+            )}
+          </div>
+          {text.backdrop === 'halo' && (
+            <p className="hint">
+              Halo keeps the layers below and outlines the text in white. It is clipped to this area, and repainting it
+              also repaints the areas below it.
+            </p>
+          )}
         </>
       )}
 
