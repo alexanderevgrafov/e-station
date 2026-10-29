@@ -10,6 +10,7 @@ import { context } from '../context.ts';
 import { loadFonts, findFace } from '../fonts.ts';
 import { drawLayout } from '../render.ts';
 import { defaultLayoutState } from '../area.ts';
+import { SAMPLE_READINGS } from '../readings.ts';
 
 // The editor is a draft editor: it keeps the whole document in the browser
 // and only sends it here on Sync&Save. So there are no granular mutation
@@ -84,8 +85,11 @@ editorRouter.post('/preview.png', (req, res) => {
       const canvas = createCanvas(draft.global.screenWidth, draft.global.screenHeight);
       // Always the layout's own defaults, never live state. The preview is a
       // design surface: you need to see the default text you just typed, not
-      // whatever value /intake last pushed over it.
-      drawLayout(canvas.getContext('2d'), layout, defaultLayoutState(layout.areas), draft.global, preloaded);
+      // whatever value /intake last pushed over it. Sensor placeholders do
+      // show the live readings, or made-up ones when no sensor answers, so a
+      // box can be sized against a realistic string either way.
+      const readings = context.sensors.latest.at === null ? SAMPLE_READINGS : context.sensors.latest;
+      drawLayout(canvas.getContext('2d'), layout, defaultLayoutState(layout.areas), draft.global, preloaded, readings);
       return canvas.toBuffer('image/png');
     })
     .then(
@@ -95,6 +99,12 @@ editorRouter.post('/preview.png', (req, res) => {
       },
       (error: unknown) => fail(res, error, 'Preview render failed'),
     );
+});
+
+// What the sensors last said, and why one is not saying anything.
+editorRouter.get('/sensors', (_req, res) => {
+  const { latest, status, pollSecs } = context.sensors;
+  res.json({ success: true, readings: latest, status, pollSecs });
 });
 
 // Fonts the panel can actually render, so the editor offers a list rather

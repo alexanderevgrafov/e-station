@@ -14,6 +14,10 @@ the story of one hardware quirk that took a while to pin down.
   (`Example/EpaperModuleTest_RaspberryPi` is what `epd_util/` was built from).
 - **Board:** Raspberry Pi Zero 2W, DietPi, at `192.168.233.109`, user
   `dietpi`, project lives at `/home/dietpi/e-station`.
+- **Sensor:** AHT20 + BMP280 combo board on I2C1 - VCC pin 1 (3.3V), SDA
+  pin 3 (GPIO2), SCL pin 5 (GPIO3), GND pin 9. I2C must be on
+  (`dtparam=i2c_arm=on`, or `dietpi-config` -> Advanced); `i2cdetect -y 1`
+  should show `38` and `76`/`77`. See "Sensors" below.
 - **Service:** `e-station-server.service` (systemd) runs `node server.ts`. The
   unit is versioned at `deploy/e-station-server.service` and installed from
   there by every deploy - do not hand-edit it on the device, the next deploy
@@ -34,6 +38,9 @@ server.ts (Express, HTTP API)
                           panel and the editor's preview PNG)
   -> src/dither.ts        greyscale -> pure black/white, 7 algorithms
   -> src/images.ts        uploads: resize, content-addressed store, decode cache
+  -> src/sensors.ts       AHT20 + BMP280 drivers and the poller (i2c-bus)
+  -> src/readings.ts      {temp}-style placeholders and their formatting
+                          (shared with the browser)
   -> src/area.ts          geometry, z-order, overlap derivation (shared with
                           the browser)
   -> src/fonts.ts         scans font dirs, registers them with node-canvas
@@ -178,6 +185,47 @@ new pictures in that period. `maxZoom` caps how deep Mandelbrot views zoom
 (power of ten, default 3.5); a view with almost no edges (blank or one smooth
 blob edge) is zoomed back out in half-steps until it has some.
 Timers are rebuilt on every Sync & Save; a fresh seed is rolled at boot.
+
+### Sensors
+
+`src/sensors.ts` reads the AHT20 (temperature, humidity) and BMP280
+(pressure, and temperature as a fallback) every `global.sensorPollSecs`
+seconds (default 60, 0 = off) from `/dev/i2c-<global.i2cBus>` (default 1),
+and once straight away on boot and on every Sync & Save. A sensor that stops
+answering is re-probed every poll, so replugging needs no restart. Status
+changes are logged once, not every poll.
+
+Readings reach the screen through **placeholders in text areas** - in the
+default text or in text pushed via `/intake`:
+
+| placeholder | shows | default decimals |
+|---|---|---|
+| `{temp}` | temperature, °C | 1 |
+| `{tempF}` | temperature, °F | 0 |
+| `{humidity}` | relative humidity, % | 0 |
+| `{pressure}` | station pressure, hPa (not sea-level corrected) | 0 |
+| `{mmHg}` | the same, mmHg | 0 |
+
+`{temp:0}` overrides the decimals. Units are not part of a placeholder - write
+them as text (`{temp}°`). A value the sensor has not produced shows `--`; an
+unknown name is left as typed, so a typo is visible on the preview.
+
+A new reading changes no area state, so no processor sees it. Instead the
+context renders every text area with the previous and the new readings and
+repaints only those whose string changed, as one window. Rounding to the
+displayed decimals is what keeps the panel still while the raw values
+jitter. A failed push rolls the context's readings back, so the next poll
+retries. Boot and sync record the first reading without a partial push,
+because a full refresh follows either way.
+
+The editor preview expands placeholders with the live readings, or with fixed
+sample values while no sensor has answered (the dev machine), so boxes can be
+sized against realistic strings. The **Sensors** panel shows each chip's
+status, the last read time and every placeholder's current value; a text
+area's form has clickable placeholders and shows what its text expands to.
+
+`i2c-bus` is an **optional** native dependency, imported lazily. Where it
+cannot load or there is no bus, the sensors are just reported missing.
 
 ### Image areas
 
@@ -350,7 +398,8 @@ $ curl 'http://board:3333/intake/hours?text=14'      # unchanged
 
 Also:
 
-- `GET /api/status` - current layout, its areas, the live state, the globals.
+- `GET /api/status` - current layout, its areas, the live state, the sensor
+  readings and status, the globals.
 - `GET /api/clear-full` - immediate whole-panel full refresh.
 
 Layout editor API, all under `/api/editor`:
@@ -364,6 +413,8 @@ Layout editor API, all under `/api/editor`:
   save landed but the panel did not repaint.
 - `POST /preview.png` - `{store, layout}`. The true render of an **unsaved**
   draft; persists nothing.
+- `GET /sensors` - `{readings, status, pollSecs}`: the last poll, and per
+  chip `ok ...` or why it is not answering.
 - `GET /fonts` · `GET /fonts/:id/file`
 - `POST /images` - raw PNG/JPEG body, returns `{id, width, height, bytes}`
 - `GET /images` · `GET /images/:id` · `DELETE /images/:id`

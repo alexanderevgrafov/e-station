@@ -5,6 +5,8 @@ import { byZ } from './area.ts';
 import { dither } from './dither.ts';
 import { fractalGray } from './fractal.ts';
 import type { ImageBank } from './images.ts';
+import { expandTokens } from './readings.ts';
+import type { TReadings } from './readings.ts';
 
 // Draws a layout onto a node-canvas context. Pure with respect to the panel -
 // src/panel.ts decides what to push and when; this only puts pixels down, so
@@ -27,10 +29,16 @@ function textOf(value: unknown, fallback: string): string {
   return fallback;
 }
 
-function drawText(ctx: CanvasRenderingContext2D, area: TTextArea, state: TAreaState): void {
-  // State wins over the area's default text: the default is only the seed
-  // value, and /intake replaces it.
-  const text = textOf(state['text'], area.text);
+// What a text area actually shows. State wins over the area's default text:
+// the default is only the seed value, and /intake replaces it. Either may
+// carry {temp}-style sensor placeholders, expanded at draw time - which is
+// how a new reading repaints a text nobody has written to.
+export function renderedText(area: TTextArea, state: TAreaState, readings: TReadings): string {
+  return expandTokens(textOf(state['text'], area.text), readings);
+}
+
+function drawText(ctx: CanvasRenderingContext2D, area: TTextArea, state: TAreaState, readings: TReadings): void {
+  const text = renderedText(area, state, readings);
   if (text === '') return;
 
   ctx.fillStyle = TEXT_INK;
@@ -170,6 +178,7 @@ export function drawArea(
   area: TArea,
   state: TAreaState,
   images: ImageBank,
+  readings: TReadings,
   name = '',
 ): void {
   // A halo text area is the one thing that draws over what is below it.
@@ -177,7 +186,7 @@ export function drawArea(
 
   switch (area.type) {
     case 'text':
-      drawText(ctx, area, state);
+      drawText(ctx, area, state, readings);
       break;
     case 'image':
       // Falls back to the placeholder when nothing is uploaded yet, or when
@@ -202,11 +211,12 @@ export function drawAreas(
   state: TLayoutState,
   names: string[],
   images: ImageBank,
+  readings: TReadings,
 ): void {
   const wanted = new Set(names);
   for (const [name, area] of byZ(layout.areas)) {
     if (!wanted.has(name) || !area.enabled) continue;
-    drawArea(ctx, area, state[name] ?? {}, images, name);
+    drawArea(ctx, area, state[name] ?? {}, images, readings, name);
   }
 }
 
@@ -216,8 +226,9 @@ export function drawLayout(
   state: TLayoutState,
   global: TGlobal,
   images: ImageBank,
+  readings: TReadings,
 ): void {
   ctx.fillStyle = WHITE;
   ctx.fillRect(0, 0, global.screenWidth, global.screenHeight);
-  drawAreas(ctx, layout, state, Object.keys(layout.areas), images);
+  drawAreas(ctx, layout, state, Object.keys(layout.areas), images, readings);
 }

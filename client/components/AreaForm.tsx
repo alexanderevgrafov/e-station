@@ -4,6 +4,9 @@ import type { FontFamilyInfo } from '../api.ts';
 import { FractalFields } from './FractalFields.tsx';
 import { ImageFields } from './ImageFields.tsx';
 import { NumberField, TextField } from './fields.tsx';
+import { TokenChips } from './SensorPanel.tsx';
+import { expandTokens, hasTokens } from '../../src/readings.ts';
+import type { TReadings } from '../../src/readings.ts';
 import type { TArea, TAreaType, TFractalArea, TImageArea, TTextArea } from '../../src/types.ts';
 import { AREA_TYPES, BACKDROPS, H_ALIGNS } from '../../src/types.ts';
 
@@ -12,6 +15,8 @@ interface Props {
   area: TArea;
   existing: string[];
   fonts: FontFamilyInfo[];
+  // What sensor placeholders expand to here - live, or the preview's samples.
+  readings: TReadings;
   onChange: (patch: Partial<TArea>) => Promise<void>;
   onRename: (to: string) => Promise<void>;
   onBringToFront: () => Promise<void>;
@@ -19,7 +24,7 @@ interface Props {
   onDelete: () => Promise<void>;
 }
 
-export function AreaForm({ name, area, existing, fonts, onChange, onRename, onBringToFront, onClone, onDelete }: Props) {
+export function AreaForm({ name, area, existing, fonts, readings, onChange, onRename, onBringToFront, onClone, onDelete }: Props) {
   const [nameDraft, setNameDraft] = useState(name);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -120,6 +125,15 @@ export function AreaForm({ name, area, existing, fonts, onChange, onRename, onBr
           <div className="fields">
             <TextField label="Default text" value={text.text} onCommit={(value) => patch({ text: value } as Partial<TArea>)} />
           </div>
+          <p className="hint">
+            Sensor values: <TokenChips onInsert={(token) => patch({ text: text.text + token } as Partial<TArea>)} />
+            {hasTokens(text.text) && (
+              <>
+                {' '}
+                Shows <code>{expandTokens(text.text, readings)}</code> now.
+              </>
+            )}
+          </p>
           <div className="fields">
             <label className="field">
               <span>Font</span>

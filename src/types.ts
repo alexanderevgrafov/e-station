@@ -177,6 +177,11 @@ export interface TGlobal extends TJsonObject {
   // Push an extra white frame over an area's window before redrawing it. Off:
   // the panel clears old ink itself. See README's sticky-window section.
   preClearBeforeRedraw: boolean;
+  // The AHT20+BMP280 board: which /dev/i2c-N it is on, and how often it is
+  // read. 0 turns polling off. Text areas show the readings through
+  // {temp}-style placeholders - see src/readings.ts.
+  i2cBus: number;
+  sensorPollSecs: number;
 }
 
 export interface TLayout {
@@ -197,6 +202,8 @@ export const DEFAULT_GLOBAL: TGlobal = {
   fullRefreshEveryMins: 60,
   fullRefreshEveryNPartials: 60,
   preClearBeforeRedraw: false,
+  i2cBus: 1,
+  sensorPollSecs: 60,
 };
 
 export const EMPTY_STORE: TStore = {

@@ -138,7 +138,7 @@ export function setGlobal(store: TStore, global: unknown): TStore {
       throw new DocumentError(`global.${key} must be a positive number`);
     }
   }
-  for (const key of ['fullRefreshEveryMins', 'fullRefreshEveryNPartials', 'timezoneOffsetMinutes'] as const) {
+  for (const key of ['fullRefreshEveryMins', 'fullRefreshEveryNPartials', 'timezoneOffsetMinutes', 'i2cBus', 'sensorPollSecs'] as const) {
     const value = next[key];
     if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
       throw new DocumentError(`global.${key} must be a number`);

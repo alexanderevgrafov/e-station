@@ -6,6 +6,10 @@ import { preload } from './images.ts';
 import type { ImageBank } from './images.ts';
 import { defaultLayoutState, defaultStateFor, inQuietHours } from './area.ts';
 import { processorFor } from './processors.ts';
+import { renderedText } from './render.ts';
+import { NO_READINGS } from './readings.ts';
+import type { TReadings } from './readings.ts';
+import { Sensors } from './sensors.ts';
 import { deepMerge } from './settings.ts';
 import type { TAreaState, TGlobal, TJsonObject, TLayout, TLayoutState, TStore } from './types.ts';
 import { EMPTY_STORE } from './types.ts';
@@ -20,6 +24,7 @@ function randomSeed(): number {
 
 export class Context {
   readonly panel = new Panel();
+  readonly sensors = new Sensors();
 
   private store: TStore = structuredClone(EMPTY_STORE);
   private currentLayoutName: string | null = null;
@@ -41,6 +46,11 @@ export class Context {
   // One interval per fractal area, re-rolling its seed. Rebuilt on every
   // reload, since the interval is part of the layout being edited.
   private fractalTimers: NodeJS.Timeout[] = [];
+
+  // The readings the panel was last drawn with - not necessarily the
+  // sensors' latest: a push that failed rolls this back, so the next poll
+  // sees the difference again and retries instead of leaving stale numbers.
+  private readings: TReadings = NO_READINGS;
 
   get global(): TGlobal {
     return this.store.global;
@@ -74,13 +84,55 @@ export class Context {
   async init(): Promise<void> {
     await loadFonts();
     await this.reload();
+    await this.startSensors();
     this.ready = true;
     this.panel.startFullRefreshTimer(() => this.frame());
   }
 
-  private frame(): { layout: TLayout; state: TLayoutState; global: TGlobal; images: ImageBank } | null {
+  private frame(): { layout: TLayout; state: TLayoutState; global: TGlobal; images: ImageBank; readings: TReadings } | null {
     const layout = this.layout;
-    return layout ? { layout, state: this.state, global: this.store.global, images: this.images } : null;
+    return layout ? { layout, state: this.state, global: this.store.global, images: this.images, readings: this.readings } : null;
+  }
+
+  // Resolves after the first poll. Both callers follow it with a full
+  // refresh, so that first reading is only recorded, not pushed on its own.
+  private startSensors(): Promise<void> {
+    let first = true;
+    return this.sensors.start(this.store.global.i2cBus, this.store.global.sensorPollSecs, (readings) => {
+      if (first) {
+        first = false;
+        this.readings = readings;
+        return;
+      }
+      this.applyReadings(readings).catch((error: unknown) => console.error('Sensor repaint failed:', error));
+    });
+  }
+
+  // A new reading touches no state, so no processor sees it. Instead every
+  // text area is rendered with the old and the new readings, and only those
+  // whose string changed are repainted - together, as one window. Rounding
+  // to the token's decimals is what keeps a jittery last digit off the glass.
+  private async applyReadings(next: TReadings): Promise<RefreshResult | null> {
+    const previous = this.readings;
+    this.readings = next;
+
+    const layout = this.layout;
+    if (!layout) return null;
+    const changed = Object.entries(layout.areas)
+      .filter(([name, area]) => {
+        if (area.type !== 'text' || !area.enabled) return false;
+        const state = this.getAreaState(name);
+        return renderedText(area, state, previous) !== renderedText(area, state, next);
+      })
+      .map(([name]) => name);
+    if (changed.length === 0) return null;
+
+    try {
+      return await this.panel.refreshAreas(changed, layout, this.state, this.store.global, this.images, next);
+    } catch (error) {
+      this.readings = previous;
+      throw error;
+    }
   }
 
   // Re-reads the document from disk and reconciles the live state with it.
@@ -175,7 +227,7 @@ export class Context {
     if (!outcome.redraw) return null;
 
     try {
-      return await this.panel.refreshAreas([areaName], layout, this.state, this.store.global, this.images);
+      return await this.panel.refreshAreas([areaName], layout, this.state, this.store.global, this.images, this.readings);
     } catch (error) {
       // The push failed, so the panel does not show `next`. Rolling the state
       // back keeps it honest about what is on screen - otherwise the next
@@ -191,7 +243,7 @@ export class Context {
   async refreshAll(mode: 'full' | 'full-manual' = 'full'): Promise<RefreshResult | null> {
     const frame = this.frame();
     if (!frame) return null;
-    return this.panel.fullRefresh(frame.layout, frame.state, frame.global, frame.images, mode);
+    return this.panel.fullRefresh(frame.layout, frame.state, frame.global, frame.images, frame.readings, mode);
   }
 
   // Sync & Save: the document has just been written, so pick it up and bring
@@ -200,6 +252,8 @@ export class Context {
   async sync(): Promise<RefreshResult | null> {
     await this.reload();
     this.panel.startFullRefreshTimer(() => this.frame());
+    // Bus or poll interval may have just been edited.
+    await this.startSensors();
     return this.refreshAll('full-manual');
   }
 }

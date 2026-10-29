@@ -66,6 +66,8 @@ server.get('/api/status', (_req, res) => {
     layouts: Object.keys(context.layouts),
     areas: Object.keys(context.layout?.areas ?? {}),
     state: context.getState(),
+    readings: context.sensors.latest,
+    sensors: context.sensors.status,
     global: context.global,
   });
 });

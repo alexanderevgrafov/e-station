@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { api } from './api.ts';
 import { useFonts } from './useFonts.ts';
+import { useSensors } from './useSensors.ts';
 import { usePreview } from './usePreview.ts';
 import { JsonPanel } from './components/JsonPanel.tsx';
 import { LayoutPicker } from './components/LayoutPicker.tsx';
@@ -11,6 +12,7 @@ import { AreaList } from './components/AreaList.tsx';
 import type { TAreaFilter } from './components/AreaList.tsx';
 import { AreaForm } from './components/AreaForm.tsx';
 import { SyncBar } from './components/SyncBar.tsx';
+import { SensorPanel, previewReadings } from './components/SensorPanel.tsx';
 import { mergeSettings } from '../src/settings.ts';
 import * as doc from '../src/document.ts';
 import type { Rect } from '../src/area.ts';
@@ -31,6 +33,7 @@ export function App() {
   const [editError, setEditError] = useState<string | null>(null);
 
   const { fonts, error: fontError } = useFonts();
+  const { sensors, error: sensorError } = useSensors();
   const { url: previewUrl, error: previewError } = usePreview(draft, selected);
 
   useEffect(() => {
@@ -136,6 +139,7 @@ export function App() {
                 edit((store) => doc.setGlobalSettings(store, value));
               }}
             />
+            <SensorPanel sensors={sensors} error={sensorError} />
           </>
         ) : (
           <>
@@ -192,6 +196,7 @@ export function App() {
                     area={area}
                     existing={areaNames}
                     fonts={fonts}
+                    readings={previewReadings(sensors)}
                     onChange={async (patch: Partial<TArea>) => {
                       edit((store) => doc.updateArea(store, selected, selectedArea, patch));
                     }}
@@ -216,6 +221,8 @@ export function App() {
                 )}
               </div>
             </div>
+
+            <SensorPanel sensors={sensors} error={sensorError} />
 
             <JsonPanel
               title="Layout settings"
