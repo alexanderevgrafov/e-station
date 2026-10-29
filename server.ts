@@ -24,10 +24,10 @@ function errorMessage(error: unknown): string {
 server.use(express.json());
 server.use(express.urlencoded({ extended: true }));
 
-// The panel's update path: /intake/:areaName?field=value writes area state,
-// and that area's processor decides whether anything is repainted. There is
-// no internal timer driving content any more - whatever wants the clock on
-// screen calls this.
+// The panel's update path: /intake?name=value sets variables that text areas
+// show through {name} placeholders, and /intake/:areaName?field=value writes
+// an area's own state. There is no internal timer driving content any more -
+// whatever wants the clock on screen calls this.
 server.use('/intake', intakeRouter);
 
 // Layout editor: JSON API under /api/editor, single-page app at /editor.
@@ -66,6 +66,7 @@ server.get('/api/status', (_req, res) => {
     layouts: Object.keys(context.layouts),
     areas: Object.keys(context.layout?.areas ?? {}),
     state: context.getState(),
+    variables: context.getVariables(),
     readings: context.sensors.latest,
     sensors: context.sensors.status,
     global: context.global,

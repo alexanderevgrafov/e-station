@@ -28,9 +28,11 @@ the story of one hardware quirk that took a while to pin down.
 ```
 server.ts (Express, HTTP API)
   -> src/context.ts       THE SINGLETON: global + layouts + current layout +
-                          live state + the panel. Everything that draws goes
-                          through it. setState(area, patch) merges, calls the
-                          area's processor, and repaints if it says so.
+                          live state + the variable pool + the panel.
+                          Everything that draws goes through it.
+                          setVariables(patch) repaints the text areas whose
+                          string changed; setState(area, patch) merges, calls
+                          the area's processor, and repaints if it says so.
   -> src/processors.ts    per-area-type "did this state change matter?"
   -> src/panel.ts         owns EPaperDisplay; full vs partial policy, window
                           byte-alignment, refresh timers
@@ -39,8 +41,9 @@ server.ts (Express, HTTP API)
   -> src/dither.ts        greyscale -> pure black/white, 7 algorithms
   -> src/images.ts        uploads: resize, content-addressed store, decode cache
   -> src/sensors.ts       AHT20 + BMP280 drivers and the poller (i2c-bus)
-  -> src/readings.ts      {temp}-style placeholders and their formatting
-                          (shared with the browser)
+  -> src/variables.ts     the variable pool's types, the sensor variables,
+                          {name} placeholders and their formatting (shared
+                          with the browser)
   -> src/area.ts          geometry, z-order, overlap derivation (shared with
                           the browser)
   -> src/fonts.ts         scans font dirs, registers them with node-canvas
@@ -52,7 +55,7 @@ server.ts (Express, HTTP API)
        epaper/epaper.c    SSD1683 register-level driver (adapted from the
                           official WeAct example)
 
-  -> src/routes/intake.ts  /intake/:area - the panel's update path
+  -> src/routes/intake.ts  /intake?name=value - the panel's update path
   -> src/routes/editor.ts  layout editor JSON API, /api/editor/*
   -> src/document.ts       every operation on the document, as pure functions -
                            shared with the browser, which edits a local draft
@@ -64,13 +67,14 @@ client/  (React + TS, bundled by webpack into public/editor/, served at /editor)
 ```
 
 `context` is a **singleton**: the loaded document, which layout is current
-(the first one, for now), the live per-area state, and the panel. State and
-the canvas persist as long as the Node process is alive.
+(the first one, for now), the live per-area state, the variable pool, and the
+panel. State, variables and the canvas persist as long as the Node process is
+alive.
 
 **There is no longer anything inside the server driving content.** The
 hardcoded HH:MM digit-box clock that used to live in `src/logic.ts` is gone;
-a clock is now just a layout with two text areas, and whatever wants the time
-on screen calls `/intake`. The only internal timer left is the whole-panel
+a clock is now just a text area with `{hours}:{minutes}` in it, and whatever
+wants the time on screen calls `/intake?hours=14&minutes=05`. The only internal timer left is the whole-panel
 refresh (`global.fullRefreshEveryMins`), which exists for panel hygiene, not
 for content.
 
@@ -122,7 +126,7 @@ document at `data/layouts.json` on the device:
           "x": 40, "y": 90, "w": 144, "h": 100,
           "z": 1,                        // unique, higher draws later
           "overlapped": ["label"],       // DERIVED - never hand-edit
-          "text": "12",                  // default text = initial state
+          "text": "{hours}",             // template over the variable pool
           "font": "Ubuntu", "fontSize": 80,
           "fontWeight": "bold", "align": "right"
         }
@@ -195,10 +199,10 @@ and once straight away on boot and on every Sync & Save. A sensor that stops
 answering is re-probed every poll, so replugging needs no restart. Status
 changes are logged once, not every poll.
 
-Readings reach the screen through **placeholders in text areas** - in the
-default text or in text pushed via `/intake`:
+Each poll writes its readings into the **variable pool** - the same one
+`/intake` writes to (see [Variables](#variables-and-placeholders)) - as:
 
-| placeholder | shows | default decimals |
+| variable | shows | default decimals |
 |---|---|---|
 | `{temp}` | temperature, °C | 1 |
 | `{tempF}` | temperature, °F | 0 |
@@ -206,23 +210,14 @@ default text or in text pushed via `/intake`:
 | `{pressure}` | station pressure, hPa (not sea-level corrected) | 0 |
 | `{mmHg}` | the same, mmHg | 0 |
 
-`{temp:0}` overrides the decimals. Units are not part of a placeholder - write
-them as text (`{temp}°`). A value the sensor has not produced shows `--`; an
-unknown name is left as typed, so a typo is visible on the preview.
-
-A new reading changes no area state, so no processor sees it. Instead the
-context renders every text area with the previous and the new readings and
-repaints only those whose string changed, as one window. Rounding to the
-displayed decimals is what keeps the panel still while the raw values
-jitter. A failed push rolls the context's readings back, so the next poll
-retries. Boot and sync record the first reading without a partial push,
+A value the sensor has not produced shows `--`. They are stored raw, so the
+default decimals apply at expansion and `{temp:.0}` overrides them. Rounding to
+the displayed decimals is what keeps the panel still while the raw values
+jitter. Boot and sync record the first reading without a partial push,
 because a full refresh follows either way.
 
-The editor preview expands placeholders with the live readings, or with fixed
-sample values while no sensor has answered (the dev machine), so boxes can be
-sized against realistic strings. The **Sensors** panel shows each chip's
-status, the last read time and every placeholder's current value; a text
-area's form has clickable placeholders and shows what its text expands to.
+The editor preview uses fixed sample values for these while no sensor has
+answered (the dev machine), so boxes can be sized against realistic strings.
 
 `i2c-bus` is an **optional** native dependency, imported lazily. Where it
 cannot load or there is no bus, the sensors are just reported missing.
@@ -282,25 +277,62 @@ turns a 2-second refresh into a 5-second one. Rendering is synchronous, so
 An area whose `src` is null, or whose file has been deleted, falls back to the
 dashed placeholder rather than failing the render.
 
-### State, processors, and /intake
+### Variables and placeholders
 
-`context.state` is a per-area bag of live values, keyed by area name, seeded
-from each area's defaults (a text area starts at its default `text`; image and
-svg carry nothing yet). It is **not** persisted - it is what `/intake` writes.
+`context.variables` is **one flat pool** of named values, not tied to any
+area. The sensor poller writes `temp`, `humidity` and friends into it;
+`/intake?name=value` writes anything else. It is **not** persisted.
+
+A text area's `text` is a **template** over that pool: `{name}` is replaced by
+the variable's value at draw time, `{name:.N}` rounds it to N decimals
+(`{temp:.1}` -> `21.4`, `{temp:.0}` -> `21`; the older `{name:N}` still works).
+So any text area can show any combination - `{hours}:{minutes}`,
+`{temp}° · {note}` - and one variable can appear in several areas. Text areas
+have no state of their own; editing the text in the editor shows up on the
+panel at the next Sync & Save.
+
+- Strings are shown exactly as sent, so `"09"` keeps its zero. With `.N`
+  given, a string holding a number (`"21.437"`, `"21,437"`, `" -3 "`) is read
+  as a float and rounded - which is how `/intake` query values, always
+  strings, get formatted. A string that is not a number (`"12:30"`) is still
+  shown as sent.
+- Numbers print as-is, except sensor variables, which use their default
+  decimals.
+- `null` (a sensor that has not answered) shows `--`.
+- A name nobody has set is **left as typed** - so a typo, or a variable the
+  feeder has not sent since boot, is visible on the screen rather than
+  silently blank. The editor's area form lists such names under "Not set yet".
+- Names are `[A-Za-z_][A-Za-z0-9_]*`. `/intake` may overwrite a sensor
+  variable, but the next poll writes it back.
+
+`context.setVariables(patch)` - the one path for both the poller and
+`/intake` - renders every enabled text area with the old and the new pool and
+repaints only those whose string changed, together, as one window. A poller
+sending the same values every few seconds costs nothing. If the push fails,
+the keys that patch wrote are rolled back (unless something has written them
+since), so the next identical value is seen as a change and retried instead
+of lost.
+
+The editor expands placeholders against the live pool (with sample sensor
+values while no sensor has answered). The **Variables** panel lists every
+variable, where it comes from and its current value; a text area's form has
+clickable chips for all of them and shows what its text expands to.
+
+### Area state and processors
+
+`context.state` is a per-area bag of live values, keyed by area name. Today
+only `fractal` has any (its `seed`); text is driven by variables instead, and
+image and svg carry nothing yet. It is not persisted.
 
 **Editing a layout never writes state.** An area's default applies on the
-preview, and from startup *until something speaks for that area from outside*.
-The context tracks which areas `/intake` has claimed: an unclaimed area keeps
-following its default, so editing default text shows up on the panel at the
-next sync; once `/intake` has set it, the live value wins and editing the
-default no longer disturbs the screen.
+preview, and from startup *until something speaks for that area from outside*
+via `/intake/:areaName`; once it has, the live value wins and editing the
+layout no longer disturbs the screen.
 
 `context.setState(areaName, patch)` merges the patch, then hands `(next,
 previous, ctx)` to that area type's **processor**. The processor decides
 whether the panel is touched; `src/processors.ts` is where custom ones will
-plug in. Text's processor compares the *rendered string*, so a caller polling
-every few seconds with an unchanged value costs nothing, and sending `14`
-after `"14"` changes the stored type but not a pixel.
+plug in. Fractal's repaints only when the seed changes.
 
 If the hardware push fails, the state is rolled back to `previous`. Otherwise
 it would claim a value the panel never showed, and the next identical call
@@ -329,10 +361,9 @@ under draggable boxes. So positioning happens against real fonts and real
 output, while dragging stays local and instant. The PNG is cache-busted by a
 version counter bumped on every save.
 
-The preview always renders the layout's **defaults**, never live state. It is
-a design surface: you need to see the default text you just typed, not
-whatever value `/intake` last pushed over it. It is always on - there is no
-toggle.
+The preview always renders area state from the layout's **defaults**, never
+live state - it is a design surface. Placeholders do expand, against the live
+variable pool. It is always on - there is no toggle.
 
 **The editor edits a local draft.** The whole document lives in the browser
 and nothing - not the file, not the panel - changes until **Sync & Save**
@@ -373,33 +404,45 @@ editor itself never touches the hardware.
 **This is how the panel gets updated:**
 
 ```
-GET  /intake/:areaName?<field>=<value>[&<field>=<value>...]
-POST /intake/:areaName    {"field": value}
+GET  /intake?<name>=<value>[&<name>=<value>...]
+POST /intake    {"name": value, ...}
 ```
 
-Writes those fields into the area's state; its processor decides whether
-anything is repainted. The response carries the resulting state and
-`refreshed` - `null` when nothing needed drawing, otherwise the mode, the
-areas actually repainted (including any pulled in by overlap) and the pushed
-window.
+Sets those variables in the pool (see
+[Variables](#variables-and-placeholders)); every text area whose rendered
+string changes is repainted, all in one window. Values may be strings,
+numbers or booleans; `null` (POST only) removes a variable. The response
+carries the whole pool and `refreshed` - `null` when nothing needed drawing,
+otherwise the mode, the areas actually repainted (including any pulled in by
+overlap) and the pushed window.
 
 Query values stay **strings**, deliberately. Coercing `"14"` to a number looks
 tidy until `"09"` becomes `9` and the clock loses its leading zero. Send a
 POST body if you want real JSON types.
 
 ```
-$ curl 'http://board:3333/intake/hours?text=14'
-{"success":true,"area":"hours","state":{"text":"14"},
- "refreshed":{"mode":"partial","areas":["hours"],"window":{"x":40,...}}}
+$ curl 'http://board:3333/intake?hours=14&minutes=05'
+{"success":true,"variables":{"temp":21.4,...,"hours":"14","minutes":"05"},
+ "refreshed":{"mode":"partial","areas":["clock"],"window":{"x":40,...}}}
 
-$ curl 'http://board:3333/intake/hours?text=14'      # unchanged
-{"success":true,...,"refreshed":null}                # panel not touched
+$ curl 'http://board:3333/intake?hours=14&minutes=05'   # unchanged
+{"success":true,...,"refreshed":null}                   # panel not touched
 ```
+
+```
+GET  /intake/:areaName?<field>=<value>
+POST /intake/:areaName    {"field": value}
+```
+
+Writes an area's own state - today that is a fractal's `seed`. Its processor
+decides whether anything is repainted. A **text area answers 400** here: the
+old `/intake/hours?text=14` is now `/intake?hours=14` with `{hours}` in the
+area's text.
 
 Also:
 
-- `GET /api/status` - current layout, its areas, the live state, the sensor
-  readings and status, the globals.
+- `GET /api/status` - current layout, its areas, the live state, the variable
+  pool, the sensor readings and status, the globals.
 - `GET /api/clear-full` - immediate whole-panel full refresh.
 
 Layout editor API, all under `/api/editor`:
@@ -413,8 +456,9 @@ Layout editor API, all under `/api/editor`:
   save landed but the panel did not repaint.
 - `POST /preview.png` - `{store, layout}`. The true render of an **unsaved**
   draft; persists nothing.
-- `GET /sensors` - `{readings, status, pollSecs}`: the last poll, and per
-  chip `ok ...` or why it is not answering.
+- `GET /sensors` - `{readings, status, pollSecs, variables}`: the last poll,
+  per chip `ok ...` or why it is not answering, and the pool placeholders
+  expand against in the editor.
 - `GET /fonts` · `GET /fonts/:id/file`
 - `POST /images` - raw PNG/JPEG body, returns `{id, width, height, bytes}`
 - `GET /images` · `GET /images/:id` · `DELETE /images/:id`
@@ -717,14 +761,15 @@ that cycle.
 The bug only ever showed up as *narrow after wide*, so that is the ordering to
 walk. It needs two **overlapping** areas, so that changing the lower one
 pushes a wide window (both areas, via the overlap rule) and changing the upper
-one pushes a narrow one. With `hours` (z1) and `label` (z2) overlapping:
+one pushes a narrow one. With `hours` (z1, text `{h}`) and `label` (z2, text
+`{l}`) overlapping:
 
 ```
-curl  .../api/clear-full            # clean baseline
-curl '.../intake/hours?text=21'     # WIDE:   repaints hours + label
-curl '.../intake/label?text=hi'     # NARROW: label only - hours must survive
-curl '.../intake/hours?text=22'     # wide again
-curl '.../intake/label?text=yo'     # narrow again
+curl  .../api/clear-full     # clean baseline
+curl '.../intake?h=21'       # WIDE:   repaints hours + label
+curl '.../intake?l=hi'       # NARROW: label only - hours must survive
+curl '.../intake?h=22'       # wide again
+curl '.../intake?l=yo'       # narrow again
 ```
 
 Each `/intake` response names the areas it actually repainted and the window
@@ -782,7 +827,7 @@ of them was the cause:
 
 ## Debugging tips
 
-- `/intake/<area>?text=...` to drive any area by hand; the response says
+- `/intake?name=...` to set any variable by hand; the response says
   whether it repainted and which areas it pulled in.
 - `/api/status` for what the server believes is on the panel right now.
 - `POST /api/editor/preview.png` with `{store, layout}` for the true render as

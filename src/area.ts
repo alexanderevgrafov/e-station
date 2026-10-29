@@ -293,11 +293,10 @@ function normalizeByType(raw: unknown, global: TGlobal, z: number): TArea {
   return { ...base, ...geometry, overlapped };
 }
 
-// The state an area starts with. Text seeds from its default text, so a
-// layout renders something sensible before anything calls /intake; fractal
-// starts at the boot timestamp; image and svg carry no state yet.
+// The state an area starts with. Fractal starts at the boot timestamp; text
+// carries none (its text is a template over the variable pool), and image and
+// svg carry none yet.
 export function defaultStateFor(area: TArea): TAreaState {
-  if (area.type === 'text') return { text: area.text };
   // Fixed per process, not per call: the preview re-renders on every edit,
   // and the picture must hold still while offsets and the like are tuned.
   if (area.type === 'fractal') return { seed: BOOT_SEED };

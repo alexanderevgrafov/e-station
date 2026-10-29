@@ -5,7 +5,7 @@ import { boundingBox, snapDown, snapUp, withAreasAbove } from './area.ts';
 import type { Rect } from './area.ts';
 import type { TGlobal, TLayout, TLayoutState } from './types.ts';
 import type { ImageBank } from './images.ts';
-import type { TReadings } from './readings.ts';
+import type { TVariables } from './variables.ts';
 
 // Protocol constants shared with epd_util/main.c
 const METHOD_FULL = 0;
@@ -49,11 +49,11 @@ export class Panel {
     state: TLayoutState,
     global: TGlobal,
     images: ImageBank,
-    readings: TReadings,
+    variables: TVariables,
     mode: RefreshMode = 'full',
   ): Promise<RefreshResult> {
     return this.serialized(async () => {
-      drawLayout(this.display.ctx, layout, state, global, images, readings);
+      drawLayout(this.display.ctx, layout, state, global, images, variables);
       const result = await this.display.displayBW(METHOD_FULL, 0, 0, global.screenWidth, global.screenHeight);
       this.partialsSinceFull = 0;
       this.display.saveCanvasAsImage('paper_full.png');
@@ -77,7 +77,7 @@ export class Panel {
     state: TLayoutState,
     global: TGlobal,
     images: ImageBank,
-    readings: TReadings,
+    variables: TVariables,
   ): Promise<RefreshResult> {
     return this.serialized(async () => {
       const expanded = withAreasAbove(layout.areas, names).filter((name) => layout.areas[name]);
@@ -89,7 +89,7 @@ export class Panel {
       // cleans it out. Checked before drawing so the full path renders
       // everything from scratch instead of layering onto a partial repaint.
       if (global.fullRefreshEveryNPartials > 0 && this.partialsSinceFull >= global.fullRefreshEveryNPartials) {
-        drawLayout(this.display.ctx, layout, state, global, images, readings);
+        drawLayout(this.display.ctx, layout, state, global, images, variables);
         const result = await this.display.displayBW(METHOD_FULL, 0, 0, global.screenWidth, global.screenHeight);
         this.partialsSinceFull = 0;
         this.display.saveCanvasAsImage('paper_full.png');
@@ -102,7 +102,7 @@ export class Panel {
         };
       }
 
-      drawAreas(this.display.ctx, layout, state, expanded, images, readings);
+      drawAreas(this.display.ctx, layout, state, expanded, images, variables);
 
       const box = boundingBox(expanded.map((name) => layout.areas[name]!));
       if (!box) {
@@ -169,7 +169,7 @@ export class Panel {
   // clock driven from outside there is nothing else guaranteeing the panel
   // ever gets cleaned.
   startFullRefreshTimer(
-    getFrame: () => { layout: TLayout; state: TLayoutState; global: TGlobal; images: ImageBank; readings: TReadings } | null,
+    getFrame: () => { layout: TLayout; state: TLayoutState; global: TGlobal; images: ImageBank; variables: TVariables } | null,
   ): void {
     this.stopFullRefreshTimer();
     const frame = getFrame();
@@ -179,7 +179,7 @@ export class Panel {
     this.fullRefreshTimer = setInterval(() => {
       const current = getFrame();
       if (!current) return;
-      this.fullRefresh(current.layout, current.state, current.global, current.images, current.readings, 'full-timer').catch((error: unknown) =>
+      this.fullRefresh(current.layout, current.state, current.global, current.images, current.variables, 'full-timer').catch((error: unknown) =>
         console.error('Timed full refresh failed:', error),
       );
     }, mins * 60 * 1000);

@@ -10,13 +10,22 @@ import { context } from '../context.ts';
 import { loadFonts, findFace } from '../fonts.ts';
 import { drawLayout } from '../render.ts';
 import { defaultLayoutState } from '../area.ts';
-import { SAMPLE_READINGS } from '../readings.ts';
+import { SAMPLE_READINGS, sensorVariables } from '../variables.ts';
+import type { TVariables } from '../variables.ts';
 
 // The editor is a draft editor: it keeps the whole document in the browser
 // and only sends it here on Sync&Save. So there are no granular mutation
 // endpoints - an edit in progress must never reach the panel, which is
 // exactly what per-field writes used to cause via the next /intake.
 export const editorRouter = Router();
+
+// What placeholders expand to in the editor: the live pool, with sample
+// sensor values standing in while no sensor has answered, so a box can be
+// sized against a realistic string either way.
+function previewVariables(): TVariables {
+  const live = context.getVariables();
+  return context.sensors.latest.at === null ? { ...live, ...sensorVariables(SAMPLE_READINGS) } : live;
+}
 
 function fail(res: Response, error: unknown, what: string): void {
   const status = error instanceof DocumentError ? error.status : 500;
@@ -83,13 +92,10 @@ editorRouter.post('/preview.png', (req, res) => {
 
       const preloaded = await preloadImages(layout);
       const canvas = createCanvas(draft.global.screenWidth, draft.global.screenHeight);
-      // Always the layout's own defaults, never live state. The preview is a
-      // design surface: you need to see the default text you just typed, not
-      // whatever value /intake last pushed over it. Sensor placeholders do
-      // show the live readings, or made-up ones when no sensor answers, so a
-      // box can be sized against a realistic string either way.
-      const readings = context.sensors.latest.at === null ? SAMPLE_READINGS : context.sensors.latest;
-      drawLayout(canvas.getContext('2d'), layout, defaultLayoutState(layout.areas), draft.global, preloaded, readings);
+      // Area state is always the layout's defaults, never live state - the
+      // preview is a design surface. Placeholders do expand, against the
+      // live variable pool (see previewVariables).
+      drawLayout(canvas.getContext('2d'), layout, defaultLayoutState(layout.areas), draft.global, preloaded, previewVariables());
       return canvas.toBuffer('image/png');
     })
     .then(
@@ -101,10 +107,11 @@ editorRouter.post('/preview.png', (req, res) => {
     );
 });
 
-// What the sensors last said, and why one is not saying anything.
+// What the sensors last said, why one is not saying anything, and the
+// variable pool placeholders expand against in the editor.
 editorRouter.get('/sensors', (_req, res) => {
   const { latest, status, pollSecs } = context.sensors;
-  res.json({ success: true, readings: latest, status, pollSecs });
+  res.json({ success: true, readings: latest, status, pollSecs, variables: previewVariables() });
 });
 
 // Fonts the panel can actually render, so the editor offers a list rather

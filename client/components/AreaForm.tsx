@@ -4,9 +4,9 @@ import type { FontFamilyInfo } from '../api.ts';
 import { FractalFields } from './FractalFields.tsx';
 import { ImageFields } from './ImageFields.tsx';
 import { NumberField, TextField } from './fields.tsx';
-import { TokenChips } from './SensorPanel.tsx';
-import { expandTokens, hasTokens } from '../../src/readings.ts';
-import type { TReadings } from '../../src/readings.ts';
+import { TokenChips } from './VariablesPanel.tsx';
+import { expandTokens, hasTokens, tokenNames } from '../../src/variables.ts';
+import type { TVariables } from '../../src/variables.ts';
 import type { TArea, TAreaType, TFractalArea, TImageArea, TTextArea } from '../../src/types.ts';
 import { AREA_TYPES, BACKDROPS, H_ALIGNS } from '../../src/types.ts';
 
@@ -15,8 +15,9 @@ interface Props {
   area: TArea;
   existing: string[];
   fonts: FontFamilyInfo[];
-  // What sensor placeholders expand to here - live, or the preview's samples.
-  readings: TReadings;
+  // What placeholders expand to here - the live pool, with sample sensor
+  // values while no sensor has answered.
+  variables: TVariables;
   onChange: (patch: Partial<TArea>) => Promise<void>;
   onRename: (to: string) => Promise<void>;
   onBringToFront: () => Promise<void>;
@@ -24,7 +25,7 @@ interface Props {
   onDelete: () => Promise<void>;
 }
 
-export function AreaForm({ name, area, existing, fonts, readings, onChange, onRename, onBringToFront, onClone, onDelete }: Props) {
+export function AreaForm({ name, area, existing, fonts, variables, onChange, onRename, onBringToFront, onClone, onDelete }: Props) {
   const [nameDraft, setNameDraft] = useState(name);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -48,6 +49,7 @@ export function AreaForm({ name, area, existing, fonts, readings, onChange, onRe
   const text = area.type === 'text' ? (area as TTextArea) : null;
   const family = fonts.find((f) => f.family === text?.font);
   const weights = family?.weights ?? ['normal', 'bold'];
+  const unset = text ? tokenNames(text.text).filter((n) => !Object.hasOwn(variables, n)) : [];
 
   return (
     <section className="panel">
@@ -123,14 +125,25 @@ export function AreaForm({ name, area, existing, fonts, readings, onChange, onRe
       {text && (
         <>
           <div className="fields">
-            <TextField label="Default text" value={text.text} onCommit={(value) => patch({ text: value } as Partial<TArea>)} />
+            <TextField label="Text" value={text.text} onCommit={(value) => patch({ text: value } as Partial<TArea>)} />
           </div>
           <p className="hint">
-            Sensor values: <TokenChips onInsert={(token) => patch({ text: text.text + token } as Partial<TArea>)} />
+            Variables:{' '}
+            <TokenChips
+              names={Object.keys(variables)}
+              onInsert={(token) => patch({ text: text.text + token } as Partial<TArea>)}
+            />
             {hasTokens(text.text) && (
               <>
                 {' '}
-                Shows <code>{expandTokens(text.text, readings)}</code> now.
+                Shows <code>{expandTokens(text.text, variables)}</code> now.
+              </>
+            )}
+            {unset.length > 0 && (
+              <>
+                {' '}
+                Not set yet: {unset.map((n) => <code key={n}>{`{${n}}`}</code>)} - shown as typed until{' '}
+                <code>/intake?{unset[0]}=...</code> sets it.
               </>
             )}
           </p>

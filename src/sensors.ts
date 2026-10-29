@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { NO_READINGS } from './readings.ts';
-import type { TReadings } from './readings.ts';
+import { NO_READINGS } from './variables.ts';
+import type { TReadings } from './variables.ts';
 
 // The AHT20 + BMP280 combo board on the Pi's I2C1 (SDA pin 3, SCL pin 5).
 // Polled on a timer; whoever started the poller gets every fresh reading and

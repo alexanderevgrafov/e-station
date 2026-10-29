@@ -7,16 +7,20 @@ import type { ImageBank } from './images.ts';
 import { defaultLayoutState, defaultStateFor, inQuietHours } from './area.ts';
 import { processorFor } from './processors.ts';
 import { renderedText } from './render.ts';
-import { NO_READINGS } from './readings.ts';
-import type { TReadings } from './readings.ts';
+import { NO_READINGS, sensorVariables } from './variables.ts';
+import type { TVariables, TVarValue } from './variables.ts';
 import { Sensors } from './sensors.ts';
 import { deepMerge } from './settings.ts';
 import type { TAreaState, TGlobal, TJsonObject, TLayout, TLayoutState, TStore } from './types.ts';
 import { EMPTY_STORE } from './types.ts';
 
 // The system singleton: the loaded document, which layout is current, the
-// live per-area state, and the panel. Everything that draws goes through
-// here.
+// live per-area state, the variable pool, and the panel. Everything that
+// draws goes through here.
+
+// A pool patch. undefined removes the variable, so its placeholders show as
+// typed again.
+export type TVariablesPatch = Record<string, TVarValue | undefined>;
 
 export class Context {
   readonly panel = new Panel();
@@ -27,12 +31,10 @@ export class Context {
   private state: TLayoutState = {};
   private ready = false;
 
-  // Areas that have been written from outside, i.e. via /intake. An area's
-  // defaults apply on preview and from startup "before state is updated from
-  // outside" - so until it appears here, its state keeps following the
-  // layout's defaults and an edit to default text shows up after a sync.
-  // Once /intake has spoken for an area, the live value wins and editing the
-  // default no longer disturbs what is on the panel.
+  // Areas whose state has been written from outside, i.e. via
+  // /intake/:area. Until an area appears here its state keeps following the
+  // layout's defaults; once /intake has spoken for it, the live value wins
+  // and editing the layout no longer disturbs what is on the panel.
   private externallySet = new Set<string>();
 
   // Decoded images for the current layout. Rendering is synchronous, so the
@@ -43,10 +45,11 @@ export class Context {
   // reload, since the interval is part of the layout being edited.
   private fractalTimers: NodeJS.Timeout[] = [];
 
-  // The readings the panel was last drawn with - not necessarily the
-  // sensors' latest: a push that failed rolls this back, so the next poll
-  // sees the difference again and retries instead of leaving stale numbers.
-  private readings: TReadings = NO_READINGS;
+  // The variable pool: sensor readings and whatever /intake has set, under
+  // one namespace. Not persisted. It holds what the panel was last drawn
+  // with - a push that failed rolls its keys back, so the next identical
+  // value is seen as a change again and retried instead of lost.
+  private variables: TVariables = sensorVariables(NO_READINGS);
 
   get global(): TGlobal {
     return this.store.global;
@@ -72,6 +75,10 @@ export class Context {
     return this.state[areaName] ?? {};
   }
 
+  getVariables(): TVariables {
+    return this.variables;
+  }
+
   // Global settings with the current layout's settings merged over them.
   get settings(): TJsonObject {
     return deepMerge(this.store.settings, this.layout?.settings ?? {});
@@ -85,9 +92,9 @@ export class Context {
     this.panel.startFullRefreshTimer(() => this.frame());
   }
 
-  private frame(): { layout: TLayout; state: TLayoutState; global: TGlobal; images: ImageBank; readings: TReadings } | null {
+  private frame(): { layout: TLayout; state: TLayoutState; global: TGlobal; images: ImageBank; variables: TVariables } | null {
     const layout = this.layout;
-    return layout ? { layout, state: this.state, global: this.store.global, images: this.images, readings: this.readings } : null;
+    return layout ? { layout, state: this.state, global: this.store.global, images: this.images, variables: this.variables } : null;
   }
 
   // Resolves after the first poll. Both callers follow it with a full
@@ -97,36 +104,47 @@ export class Context {
     return this.sensors.start(this.store.global.i2cBus, this.store.global.sensorPollSecs, (readings) => {
       if (first) {
         first = false;
-        this.readings = readings;
+        this.variables = { ...this.variables, ...sensorVariables(readings) };
         return;
       }
-      this.applyReadings(readings).catch((error: unknown) => console.error('Sensor repaint failed:', error));
+      this.setVariables(sensorVariables(readings)).catch((error: unknown) => console.error('Sensor repaint failed:', error));
     });
   }
 
-  // A new reading touches no state, so no processor sees it. Instead every
-  // text area is rendered with the old and the new readings, and only those
-  // whose string changed are repainted - together, as one window. Rounding
-  // to the token's decimals is what keeps a jittery last digit off the glass.
-  private async applyReadings(next: TReadings): Promise<RefreshResult | null> {
-    const previous = this.readings;
-    this.readings = next;
+  // Merges a patch into the variable pool - a sensor poll or an /intake call,
+  // it is the same thing. Variables touch no area state, so no processor sees
+  // them. Instead every text area is rendered with the old and the new pool,
+  // and only those whose string changed are repainted - together, as one
+  // window. Rounding to the placeholder's decimals is what keeps a jittery
+  // last digit off the glass.
+  async setVariables(patch: TVariablesPatch): Promise<RefreshResult | null> {
+    const previous = this.variables;
+    const next: TVariables = { ...previous };
+    for (const [name, value] of Object.entries(patch)) {
+      if (value === undefined) delete next[name];
+      else next[name] = value;
+    }
+    this.variables = next;
 
     const layout = this.layout;
     if (!layout) return null;
     const changed = Object.entries(layout.areas)
-      .filter(([name, area]) => {
-        if (area.type !== 'text' || !area.enabled) return false;
-        const state = this.getAreaState(name);
-        return renderedText(area, state, previous) !== renderedText(area, state, next);
-      })
+      .filter(([, area]) => area.type === 'text' && area.enabled && renderedText(area, previous) !== renderedText(area, next))
       .map(([name]) => name);
     if (changed.length === 0) return null;
 
     try {
       return await this.panel.refreshAreas(changed, layout, this.state, this.store.global, this.images, next);
     } catch (error) {
-      this.readings = previous;
+      // Only the keys this patch wrote, and only where nothing has written
+      // them since: another patch may have landed while the push was queued.
+      const current = { ...this.variables };
+      for (const name of Object.keys(patch)) {
+        if (current[name] !== next[name]) continue;
+        if (Object.hasOwn(previous, name)) current[name] = previous[name]!;
+        else delete current[name];
+      }
+      this.variables = current;
       throw error;
     }
   }
@@ -154,7 +172,7 @@ export class Context {
     this.images = await preload(layout);
 
     // Editing a layout must not disturb live state: a value pushed in via
-    // /intake survives any number of edits, redeploys and reloads. Areas
+    // /intake survives any number of edits and reloads. Areas
     // nothing has spoken for yet re-seed from their (possibly just edited)
     // defaults, and areas that no longer exist drop out.
     const next: TLayoutState = {};
@@ -223,7 +241,7 @@ export class Context {
     if (!outcome.redraw) return null;
 
     try {
-      return await this.panel.refreshAreas([areaName], layout, this.state, this.store.global, this.images, this.readings);
+      return await this.panel.refreshAreas([areaName], layout, this.state, this.store.global, this.images, this.variables);
     } catch (error) {
       // The push failed, so the panel does not show `next`. Rolling the state
       // back keeps it honest about what is on screen - otherwise the next
@@ -239,7 +257,7 @@ export class Context {
   async refreshAll(mode: 'full' | 'full-manual' = 'full'): Promise<RefreshResult | null> {
     const frame = this.frame();
     if (!frame) return null;
-    return this.panel.fullRefresh(frame.layout, frame.state, frame.global, frame.images, frame.readings, mode);
+    return this.panel.fullRefresh(frame.layout, frame.state, frame.global, frame.images, frame.variables, mode);
   }
 
   // Sync & Save: the document has just been written, so pick it up and bring

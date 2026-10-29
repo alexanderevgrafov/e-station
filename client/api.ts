@@ -1,5 +1,5 @@
 import type { TGlobal, TStore } from '../src/types.ts';
-import type { TReadings } from '../src/readings.ts';
+import type { TReadings, TVariables } from '../src/variables.ts';
 
 export interface StoredImage {
   id: string;
@@ -19,6 +19,9 @@ export interface SensorInfo {
   // 'ok ...', or why that sensor is not producing readings.
   status: { aht20: string; bmp280: string };
   pollSecs: number;
+  // The pool placeholders expand against in the editor: live values, with
+  // sample sensor values while no sensor has answered.
+  variables: TVariables;
 }
 
 type StoreResponse =
@@ -121,7 +124,7 @@ export const api = {
     const response = await fetch('/api/editor/sensors');
     const payload = (await response.json()) as ({ success: true } & SensorInfo) | { success: false; message: string };
     if (!payload.success) throw new Error(payload.message);
-    return { readings: payload.readings, status: payload.status, pollSecs: payload.pollSecs };
+    return { readings: payload.readings, status: payload.status, pollSecs: payload.pollSecs, variables: payload.variables };
   },
 };
 

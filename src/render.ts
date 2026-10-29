@@ -5,8 +5,8 @@ import { byZ } from './area.ts';
 import { dither } from './dither.ts';
 import { fractalGray } from './fractal.ts';
 import type { ImageBank } from './images.ts';
-import { expandTokens } from './readings.ts';
-import type { TReadings } from './readings.ts';
+import { expandTokens } from './variables.ts';
+import type { TVariables } from './variables.ts';
 
 // Draws a layout onto a node-canvas context. Pure with respect to the panel -
 // src/panel.ts decides what to push and when; this only puts pixels down, so
@@ -19,26 +19,15 @@ const BLACK = '#000000';
 const TEXT_INK = BLACK;
 const HALO_INK = WHITE;
 
-// State arrives from /intake and from POST bodies, so a number or boolean is
-// entirely possible. Render it rather than silently falling back to the
-// area's default, which would show stale text and look like a lost update.
-function textOf(value: unknown, fallback: string): string {
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  if (typeof value === 'boolean') return String(value);
-  return fallback;
+// What a text area actually shows: its text, with {name} placeholders filled
+// from the variable pool at draw time. Text areas carry no state of their
+// own - a new value for any variable is what repaints them.
+export function renderedText(area: TTextArea, variables: TVariables): string {
+  return expandTokens(area.text, variables);
 }
 
-// What a text area actually shows. State wins over the area's default text:
-// the default is only the seed value, and /intake replaces it. Either may
-// carry {temp}-style sensor placeholders, expanded at draw time - which is
-// how a new reading repaints a text nobody has written to.
-export function renderedText(area: TTextArea, state: TAreaState, readings: TReadings): string {
-  return expandTokens(textOf(state['text'], area.text), readings);
-}
-
-function drawText(ctx: CanvasRenderingContext2D, area: TTextArea, state: TAreaState, readings: TReadings): void {
-  const text = renderedText(area, state, readings);
+function drawText(ctx: CanvasRenderingContext2D, area: TTextArea, variables: TVariables): void {
+  const text = renderedText(area, variables);
   if (text === '') return;
 
   ctx.fillStyle = TEXT_INK;
@@ -178,7 +167,7 @@ export function drawArea(
   area: TArea,
   state: TAreaState,
   images: ImageBank,
-  readings: TReadings,
+  variables: TVariables,
   name = '',
 ): void {
   // A halo text area is the one thing that draws over what is below it.
@@ -186,7 +175,7 @@ export function drawArea(
 
   switch (area.type) {
     case 'text':
-      drawText(ctx, area, state, readings);
+      drawText(ctx, area, variables);
       break;
     case 'image':
       // Falls back to the placeholder when nothing is uploaded yet, or when
@@ -211,12 +200,12 @@ export function drawAreas(
   state: TLayoutState,
   names: string[],
   images: ImageBank,
-  readings: TReadings,
+  variables: TVariables,
 ): void {
   const wanted = new Set(names);
   for (const [name, area] of byZ(layout.areas)) {
     if (!wanted.has(name) || !area.enabled) continue;
-    drawArea(ctx, area, state[name] ?? {}, images, readings, name);
+    drawArea(ctx, area, state[name] ?? {}, images, variables, name);
   }
 }
 
@@ -226,9 +215,9 @@ export function drawLayout(
   state: TLayoutState,
   global: TGlobal,
   images: ImageBank,
-  readings: TReadings,
+  variables: TVariables,
 ): void {
   ctx.fillStyle = WHITE;
   ctx.fillRect(0, 0, global.screenWidth, global.screenHeight);
-  drawAreas(ctx, layout, state, Object.keys(layout.areas), images, readings);
+  drawAreas(ctx, layout, state, Object.keys(layout.areas), images, variables);
 }

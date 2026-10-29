@@ -25,26 +25,9 @@ export type Processor = (next: TAreaState, previous: TAreaState, ctx: ProcessorC
 
 const NO_REDRAW: ProcessorResult = { redraw: false };
 
-// Text: repaint only when the rendered string actually changed. This is what
-// keeps a caller polling /intake every few seconds from flashing the panel on
-// every request.
-const textProcessor: Processor = (next, previous, { area }) => {
-  // Compared as the rendered string, matching textOf in render.ts: sending
-  // 14 after "14" changes the stored type but not a single pixel, and must
-  // not cost a refresh.
-  const fallback = area.type === 'text' ? area.text : '';
-  const render = (value: unknown): string =>
-    typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : fallback;
-
-  const before = render(previous['text']);
-  const after = render(next['text']);
-
-  if (before === after) return NO_REDRAW;
-  return { redraw: true, reason: `text ${JSON.stringify(before)} -> ${JSON.stringify(after)}` };
-};
-
-// Placeholders: these types carry no state yet, so nothing they receive can
-// mean anything. Pass 2 gives image a real one.
+// These types carry no state, so nothing they receive can mean anything.
+// Text is driven by the variable pool instead (see Context.setVariables);
+// image will get a state of its own later.
 const inertProcessor: Processor = () => NO_REDRAW;
 
 // Fractal: a new seed is a new picture; anything else in the patch is noise.
@@ -56,7 +39,7 @@ const fractalProcessor: Processor = (next, previous) => {
 };
 
 const processors: Record<TAreaType, Processor> = {
-  text: textProcessor,
+  text: inertProcessor,
   image: inertProcessor,
   svg: inertProcessor,
   fractal: fractalProcessor,

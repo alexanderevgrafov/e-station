@@ -12,7 +12,7 @@ import { AreaList } from './components/AreaList.tsx';
 import type { TAreaFilter } from './components/AreaList.tsx';
 import { AreaForm } from './components/AreaForm.tsx';
 import { SyncBar } from './components/SyncBar.tsx';
-import { SensorPanel, previewReadings } from './components/SensorPanel.tsx';
+import { VariablesPanel, previewVariables } from './components/VariablesPanel.tsx';
 import { mergeSettings } from '../src/settings.ts';
 import * as doc from '../src/document.ts';
 import type { Rect } from '../src/area.ts';
@@ -139,7 +139,7 @@ export function App() {
                 edit((store) => doc.setGlobalSettings(store, value));
               }}
             />
-            <SensorPanel sensors={sensors} error={sensorError} />
+            <VariablesPanel sensors={sensors} error={sensorError} />
           </>
         ) : (
           <>
@@ -196,7 +196,7 @@ export function App() {
                     area={area}
                     existing={areaNames}
                     fonts={fonts}
-                    readings={previewReadings(sensors)}
+                    variables={previewVariables(sensors)}
                     onChange={async (patch: Partial<TArea>) => {
                       edit((store) => doc.updateArea(store, selected, selectedArea, patch));
                     }}
@@ -222,7 +222,7 @@ export function App() {
               </div>
             </div>
 
-            <SensorPanel sensors={sensors} error={sensorError} />
+            <VariablesPanel sensors={sensors} error={sensorError} />
 
             <JsonPanel
               title="Layout settings"

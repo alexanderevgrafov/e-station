@@ -77,7 +77,7 @@ export interface TAreaCommon {
 
 export interface TTextArea extends TAreaCommon {
   type: 'text';
-  text: string; // default text, and the initial value of the area's state
+  text: string; // template: {name} placeholders filled from the variable pool
   font: string; // family name, from /api/editor/fonts
   fontSize: number;
   fontWeight: string; // 'normal' | 'bold' | ... whatever the family offers
@@ -184,7 +184,7 @@ export interface TGlobal extends TJsonObject {
   preClearBeforeRedraw: boolean;
   // The AHT20+BMP280 board: which /dev/i2c-N it is on, and how often it is
   // read. 0 turns polling off. Text areas show the readings through
-  // {temp}-style placeholders - see src/readings.ts.
+  // {temp}-style placeholders - see src/variables.ts.
   i2cBus: number;
   sensorPollSecs: number;
 }
