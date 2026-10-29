@@ -24,6 +24,8 @@ import { AREA_TYPES, BACKDROPS, DITHERS, FRACTAL_KINDS, H_ALIGNS, SIZE_AXES, UNI
 // time; y needs no alignment.
 export const X_ALIGN = 8;
 
+const BOOT_SEED = Date.now();
+
 export function snapDown(value: number, step = X_ALIGN): number {
   return Math.floor(value / step) * step;
 }
@@ -189,7 +191,7 @@ export function defaultArea(type: TAreaType, global: TGlobal, z: number): TArea 
   const common = { ...geometry, z, enabled: true, overlapped: [] };
 
   if (type === 'text') {
-    return { ...common, type, text: 'Text', font: 'Ubuntu', fontSize: 32, fontWeight: 'normal', align: 'center', backdrop: 'clear', haloRadius: 4 };
+    return { ...common, type, text: 'Text', font: 'Ubuntu', fontSize: 32, fontWeight: 'normal', align: 'center', backdrop: 'clear', haloRadius: 4, padding: 0 };
   }
   if (type === 'image') {
     return {
@@ -207,7 +209,7 @@ export function defaultArea(type: TAreaType, global: TGlobal, z: number): TArea 
     };
   }
   if (type === 'fractal') {
-    return { ...common, type, kind: 'random', intervalMins: 10, quietFrom: '', quietTo: '', maxZoom: 3.5, seed: 1, outerWhite: 50, whiteCutoff: 25, negative: false, dither: 'threshold', bias: 0 };
+    return { ...common, type, kind: 'random', intervalMins: 10, quietFrom: '', quietTo: '', maxZoom: 3.5, offsetX: 0, offsetY: 0, outerWhite: 50, whiteCutoff: 25, negative: false, dither: 'threshold', bias: 0 };
   }
   return { ...common, type };
 }
@@ -248,6 +250,7 @@ function normalizeByType(raw: unknown, global: TGlobal, z: number): TArea {
       align: asHAlign(source['align']),
       backdrop: oneOf<TBackdrop>(source['backdrop'], BACKDROPS, base.backdrop),
       haloRadius: Math.max(0, Math.min(64, num(source['haloRadius'], base.haloRadius))),
+      padding: Math.max(0, Math.min(geometry.w, num(source['padding'], base.padding))),
     };
   }
 
@@ -277,7 +280,8 @@ function normalizeByType(raw: unknown, global: TGlobal, z: number): TArea {
       quietFrom: clock(source['quietFrom'], base.quietFrom),
       quietTo: clock(source['quietTo'], base.quietTo),
       maxZoom: Math.max(0.5, Math.min(7, num(source['maxZoom'], base.maxZoom))),
-      seed: Math.max(0, Math.trunc(num(source['seed'], base.seed))),
+      offsetX: Math.max(-100, Math.min(100, num(source['offsetX'], base.offsetX))),
+      offsetY: Math.max(-100, Math.min(100, num(source['offsetY'], base.offsetY))),
       outerWhite: Math.max(0, Math.min(100, num(source['outerWhite'], base.outerWhite))),
       whiteCutoff: Math.max(0, Math.min(100, num(source['whiteCutoff'], base.whiteCutoff))),
       negative: typeof source['negative'] === 'boolean' ? source['negative'] : base.negative,
@@ -291,12 +295,12 @@ function normalizeByType(raw: unknown, global: TGlobal, z: number): TArea {
 
 // The state an area starts with. Text seeds from its default text, so a
 // layout renders something sensible before anything calls /intake; fractal
-// starts at its saved seed; image and svg carry no state yet.
+// starts at the boot timestamp; image and svg carry no state yet.
 export function defaultStateFor(area: TArea): TAreaState {
   if (area.type === 'text') return { text: area.text };
-  // The area's own saved seed: the editor previews it, and it is what shows
-  // after a sync, so preview and panel agree.
-  if (area.type === 'fractal') return { seed: area.seed };
+  // Fixed per process, not per call: the preview re-renders on every edit,
+  // and the picture must hold still while offsets and the like are tuned.
+  if (area.type === 'fractal') return { seed: BOOT_SEED };
   return {};
 }
 

@@ -86,6 +86,9 @@ export interface TTextArea extends TAreaCommon {
   // Halo thickness in px, measured outward from the glyph edge. Only used by
   // the 'halo' backdrop. The halo is clipped to the area, so leave room.
   haloRadius: number;
+  // Px between the text and the area edge it is aligned to. Left/right
+  // align only; centred text ignores it.
+  padding: number;
 }
 
 // Placement inside the area follows CSS background-image, because that is
@@ -114,9 +117,10 @@ export interface TSvgArea extends TAreaCommon {
 }
 
 // Generated art: a black-and-white fractal, re-rolled on a timer. The picture
-// is a pure function of the area's state `seed` (plus the fields below), so
-// repaints caused by overlapping areas show the same picture, and /intake can
-// pick one by hand with ?seed=N.
+// is a pure function of the area's state `seed` (a Date.now() timestamp, never
+// stored in the layout) plus the fields below, so repaints caused by
+// overlapping areas show the same picture, and /intake can pick one by hand
+// with ?seed=N.
 export interface TFractalArea extends TAreaCommon {
   type: 'fractal';
   kind: TFractalKind;
@@ -130,9 +134,10 @@ export interface TFractalArea extends TAreaCommon {
   // Deepest Mandelbrot zoom as a power of ten (3.5 = 10^3.5 times in). Zoom
   // is also backed off when the picture would be mostly empty.
   maxZoom: number;
-  // The picture shown in the editor preview and after Sync & Save, until the
-  // timer (or /intake) replaces it. Randomize in the editor just rolls this.
-  seed: number;
+  // Shift of the view from the position the seed picked, in % of the view's
+  // width / height (100 = one full screen further right / down).
+  offsetX: number;
+  offsetY: number;
   // 0..100: how gradually the pattern outside the set fades to white with
   // distance from it. 0 keeps the full banding everywhere; 100 leaves ink
   // only close to the set's edge.

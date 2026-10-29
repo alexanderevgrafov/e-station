@@ -173,6 +173,13 @@ export function AreaForm({ name, area, existing, fonts, readings, onChange, onRe
                 ))}
               </select>
             </label>
+            {text.align !== 'center' && (
+              <NumberField
+                label={`Padding ${text.align} px`}
+                value={text.padding}
+                onCommit={(padding) => patch({ padding } as Partial<TArea>)}
+              />
+            )}
           </div>
           <div className="fields">
             <label className="field">

@@ -18,10 +18,6 @@ import { EMPTY_STORE } from './types.ts';
 // live per-area state, and the panel. Everything that draws goes through
 // here.
 
-function randomSeed(): number {
-  return Math.floor(Math.random() * 0x7fffffff);
-}
-
 export class Context {
   readonly panel = new Panel();
   readonly sensors = new Sensors();
@@ -191,7 +187,7 @@ export class Context {
       this.fractalTimers.push(
         setInterval(() => {
           if (inQuietHours(area, new Date())) return;
-          this.setState(name, { seed: randomSeed() }, false).catch((error: unknown) =>
+          this.setState(name, { seed: Date.now() }, false).catch((error: unknown) =>
             console.error(`Fractal "${name}" refresh failed:`, error),
           );
         }, area.intervalMins * 60_000),

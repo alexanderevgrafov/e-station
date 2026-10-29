@@ -47,7 +47,7 @@ function drawText(ctx: CanvasRenderingContext2D, area: TTextArea, state: TAreaSt
   ctx.textAlign = area.align;
 
   const y = area.y + area.h / 2;
-  const x = area.align === 'left' ? area.x : area.align === 'right' ? area.x + area.w : area.x + area.w / 2;
+  const x = area.align === 'left' ? area.x + area.padding : area.align === 'right' ? area.x + area.w - area.padding : area.x + area.w / 2;
 
   ctx.save();
   // Clip so an overlong string cannot bleed into a neighbouring area and
@@ -129,11 +129,11 @@ const fractalCache = new Map<string, Uint8ClampedArray>();
 
 function drawFractalArea(ctx: CanvasRenderingContext2D, area: TFractalArea, state: TAreaState, name = ''): void {
   const seed = seedOf(state);
-  const key = [name, seed, area.kind, area.w, area.h, area.outerWhite, area.whiteCutoff, area.maxZoom, area.negative, area.dither, area.bias].join('|');
+  const key = [name, seed, area.kind, area.w, area.h, area.outerWhite, area.whiteCutoff, area.maxZoom, area.offsetX, area.offsetY, area.negative, area.dither, area.bias].join('|');
 
   let pixels = fractalCache.get(key);
   if (!pixels) {
-    const gray = fractalGray(seed, area.kind, area.w, area.h, area.outerWhite, area.whiteCutoff, area.maxZoom);
+    const gray = fractalGray(seed, area.kind, area.w, area.h, area.outerWhite, area.whiteCutoff, area.maxZoom, area.offsetX, area.offsetY);
     const rgba = new Uint8ClampedArray(area.w * area.h * 4);
     for (let p = 0; p < gray.length; p += 1) {
       const v = area.negative ? 255 - gray[p]! : gray[p]!;

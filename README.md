@@ -177,14 +177,14 @@ A `fractal` area draws generated black-and-white art (Julia or Mandelbrot,
 `kind`: `random | julia | mandelbrot`) and swaps in a new picture every
 `intervalMins` minutes (0 = timer off). The picture is a pure function of the
 area's state `seed`, so overlap repaints show the same art; the timer just
-writes a random seed through the normal state path, and the processor repaints
+writes `Date.now()` as the seed through the normal state path, and the processor repaints
 only that area. `dither` and `bias` work as for image areas. Pick a picture by
-hand with `/intake/<area>?seed=42`. The editor preview always shows seed 1.
+hand with `/intake/<area>?seed=42`. The seed is never stored in the layout; the editor preview shows the picture seeded at server start.
 `quietFrom` / `quietTo` (local `HH:MM`, may wrap midnight) stop the timer rolling
 new pictures in that period. `maxZoom` caps how deep Mandelbrot views zoom
 (power of ten, default 3.5); a view with almost no edges (blank or one smooth
 blob edge) is zoomed back out in half-steps until it has some.
-Timers are rebuilt on every Sync & Save; a fresh seed is rolled at boot.
+Timers are rebuilt on every Sync & Save; the boot timestamp is the first seed.
 
 ### Sensors
 

@@ -46,14 +46,19 @@ interface Params {
   outer: number;
   // Escape speed (smooth iteration count) below which a pixel is plain white.
   cutoff: number;
+  // View shift from the seed's position, as a fraction of the view's width / height.
+  offsetX: number;
+  offsetY: number;
 }
 
 // The slider is log-scaled: escape speeds bunch up at the low end, so a
 // linear slider would spend nearly all its travel on the last few pixels.
-function paramsFor(seed: number, kind: TFractalKind, outerWhite: number, whiteCutoff: number, maxZoom: number): Params {
+function paramsFor(seed: number, kind: TFractalKind, outerWhite: number, whiteCutoff: number, maxZoom: number, offsetX: number, offsetY: number): Params {
   const params = rawParams(seed, kind, maxZoom);
   return {
     ...params,
+    offsetX: offsetX / 100,
+    offsetY: offsetY / 100,
     outer: outerWhite / 100,
     cutoff: Math.expm1((whiteCutoff / 100) * Math.log1p(params.maxIter)),
   };
@@ -70,6 +75,8 @@ function rawParams(seed: number, kind: TFractalKind, maxZoom: number): Params {
     phase: rand() * Math.PI * 2,
     outer: 0,
     cutoff: 0,
+    offsetX: 0,
+    offsetY: 0,
   };
 
   if (julia) {
@@ -120,8 +127,8 @@ function render(w: number, h: number, p: Params): { gray: Uint8Array; interior: 
 
   for (let py = 0; py < h; py += 1) {
     for (let px = 0; px < w; px += 1) {
-      const ux = (px - w / 2) * scale;
-      const uy = (py - h / 2) * scale;
+      const ux = (px - w / 2 + p.offsetX * w) * scale;
+      const uy = (py - h / 2 + p.offsetY * h) * scale;
       const x0 = p.centerX + ux * cos - uy * sin;
       const y0 = p.centerY + ux * sin + uy * cos;
 
@@ -216,12 +223,14 @@ export function fractalGray(
   outerWhite: number,
   whiteCutoff: number,
   maxZoom = 3.5,
+  offsetX = 0,
+  offsetY = 0,
 ): Uint8Array {
   let best: Uint8Array | null = null;
   let bestSpread = -1;
 
   for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
-    const { gray, interior } = renderBackingOff(w, h, paramsFor((seed + attempt * 7919) >>> 0, kind, outerWhite, whiteCutoff, maxZoom));
+    const { gray, interior } = renderBackingOff(w, h, paramsFor((seed + attempt * 7919) >>> 0, kind, outerWhite, whiteCutoff, maxZoom, offsetX, offsetY));
     const score = interior > 0.7 ? 0 : spread(gray);
     if (score > 40) return gray;
     if (score > bestSpread) {
