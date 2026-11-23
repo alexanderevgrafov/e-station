@@ -2,6 +2,7 @@ import type { TArea, TAreaType, TGlobal, TJsonObject, TLayout, TStore } from './
 import { DEFAULT_GLOBAL, EMPTY_STORE, isValidName } from './types.ts';
 import { isPlainObject } from './settings.ts';
 import {
+  byZ,
   computeOverlapped,
   defaultArea,
   isAreaType,
@@ -254,7 +255,7 @@ export function createArea(store: TStore, layoutName: string, areaName: string, 
 
 // One write path for every field of an area. `overlapped` and `z` in the
 // patch are ignored - the first is derived, the second only moves via
-// bringAreaToFront.
+// moveArea.
 export function updateArea(store: TStore, layoutName: string, areaName: string, patch: unknown): TStore {
   const next = asJsonObject(patch, 'area');
   return edit(store, (draft) => {
@@ -290,13 +291,31 @@ export function deleteArea(store: TStore, layoutName: string, areaName: string):
   });
 }
 
-export function bringAreaToFront(store: TStore, layoutName: string, areaName: string): TStore {
+// Drag-and-drop ordering: puts `areaName` directly above or below `target` in
+// the stacking order. The layout's existing z values are re-dealt in the new
+// order, so they stay unique and the set of values does not change.
+export function moveArea(
+  store: TStore,
+  layoutName: string,
+  areaName: string,
+  target: string,
+  placement: 'above' | 'below',
+): TStore {
   return edit(store, (draft) => {
     const layout = requireLayout(draft, layoutName);
-    const area = requireArea(draft, layoutName, areaName);
-    const top = nextZ(layout.areas) - 1;
-    if (area.z === top) return;
-    layout.areas[areaName] = { ...area, z: top + 1 };
+    requireArea(draft, layoutName, areaName);
+    requireArea(draft, layoutName, target);
+    if (areaName === target) return;
+
+    const ascending = byZ(layout.areas).map(([name]) => name);
+    const zs = ascending.map((name) => layout.areas[name]!.z);
+    const order = ascending.filter((name) => name !== areaName);
+    const at = order.indexOf(target);
+    order.splice(placement === 'above' ? at + 1 : at, 0, areaName);
+
+    order.forEach((name, i) => {
+      layout.areas[name] = { ...layout.areas[name]!, z: zs[i]! };
+    });
     layout.areas = withOverlapped(layout.areas);
   });
 }

@@ -15,7 +15,7 @@ interface Props {
 // A number plus its unit, the pair committed together - changing px to % and
 // leaving the number alone is almost never what is meant, but committing on
 // each half separately would fire two saves and two repaints.
-function MeasureField({
+export function MeasureField({
   label,
   hint,
   value,

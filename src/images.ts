@@ -5,6 +5,7 @@ import { createCanvas, loadImage } from 'canvas';
 import type { Image } from 'canvas';
 
 import { DATA_DIR, StoreError } from './store.ts';
+import { warm as warmSvgs } from './svgs.ts';
 import type { TGlobal, TLayout } from './types.ts';
 
 // Uploaded images: stored once, resized once, then reused. Lives under data/
@@ -147,6 +148,9 @@ export type ImageBank = Map<string, Image>;
 // warmed here first, then handed to drawLayout as a plain map.
 export async function preload(layout: TLayout): Promise<ImageBank> {
   const bank: ImageBank = new Map();
+  // SVG areas rasterize on the fly rather than through the bank, but their
+  // sources need reading before the synchronous render.
+  await warmSvgs(layout);
   const ids = Object.values(layout.areas)
     .filter((area) => area.type === 'image')
     .map((area) => (area.type === 'image' ? area.src : null))

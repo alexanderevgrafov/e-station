@@ -299,9 +299,10 @@ panel at the next Sync & Save.
 - Numbers print as-is, except sensor variables, which use their default
   decimals.
 - `null` (a sensor that has not answered) shows `--`.
-- A name nobody has set is **left as typed** - so a typo, or a variable the
-  feeder has not sent since boot, is visible on the screen rather than
-  silently blank. The editor's area form lists such names under "Not set yet".
+- A name nobody has set renders as **empty** - a variable the feeder has not
+  sent since boot does not litter the screen with `{minutes}`. The cost is that
+  a typo is blank too, so the editor's area form lists such names under "Not
+  set yet".
 - Names are `[A-Za-z_][A-Za-z0-9_]*`. `/intake` may overwrite a sensor
   variable, but the next poll writes it back.
 

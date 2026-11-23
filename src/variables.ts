@@ -103,12 +103,12 @@ function expandOne(value: TVarValue, name: string, decimals: string | undefined)
   return value;
 }
 
-// Names nobody has set are left exactly as typed, so a typo - or a variable
-// the feeder has not sent yet - shows up on the screen instead of silently
-// vanishing.
+// Names nobody has set yet (a variable the feeder has not sent since boot, or
+// a typo) expand to nothing, so a half-initialised screen is blank rather than
+// littered with "{minutes}". The editor lists such names next to the text.
 export function expandTokens(text: string, variables: TVariables): string {
-  return text.replace(TOKEN_PATTERN, (whole, name: string, decimals: string | undefined) => {
-    if (!Object.hasOwn(variables, name)) return whole;
+  return text.replace(TOKEN_PATTERN, (_whole, name: string, decimals: string | undefined) => {
+    if (!Object.hasOwn(variables, name)) return '';
     return expandOne(variables[name] ?? null, name, decimals);
   });
 }

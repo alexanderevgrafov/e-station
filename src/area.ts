@@ -10,9 +10,10 @@ import type {
   TJsonObject,
   TMeasure,
   TSizeAxis,
+  TSvgFit,
   TUnit,
 } from './types.ts';
-import { AREA_TYPES, BACKDROPS, DITHERS, FRACTAL_KINDS, H_ALIGNS, SIZE_AXES, UNITS } from './types.ts';
+import { AREA_TYPES, BACKDROPS, DITHERS, FRACTAL_KINDS, H_ALIGNS, SIZE_AXES, SVG_FITS, UNITS } from './types.ts';
 
 // Pure area rules, shared with the browser: geometry, z-ordering, overlap
 // derivation, defaults and normalization. Nothing here may import node
@@ -96,14 +97,21 @@ export function computeOverlapped(areas: Record<string, TArea>): Record<string, 
   return out;
 }
 
+// Areas that paint only their own ink and leave the rest of their rectangle
+// as it was: a halo text area and an svg area. Everything else wipes to white
+// first.
+export function keepsBackdrop(area: TArea): boolean {
+  return (area.type === 'text' && area.backdrop === 'halo') || area.type === 'svg';
+}
+
 // Repainting an area means repainting everything stacked on top of it, which
 // `overlapped` already lists directly. Still transitive: an area pulled in
 // this way can itself have areas above it.
 //
-// The exception is a halo text area: it does not wipe its rectangle, so its
-// old glyphs would survive a repaint. It therefore also pulls in the areas
+// The exception is an area that keeps its backdrop (see keepsBackdrop): it
+// does not wipe its rectangle, so its old ink would survive a repaint. It therefore also pulls in the areas
 // *below* it that it overlaps, which redraw their own pixels over the old
-// text before it is drawn again.
+// ink before it is drawn again.
 export function withAreasAbove(areas: Record<string, TArea>, seed: string[]): string[] {
   const included = new Set<string>();
   const queue = [...seed];
@@ -119,7 +127,7 @@ export function withAreasAbove(areas: Record<string, TArea>, seed: string[]): st
       if (!included.has(other)) queue.push(other);
     }
 
-    if (area.type === 'text' && area.backdrop === 'halo') {
+    if (keepsBackdrop(area)) {
       for (const [other, otherArea] of Object.entries(areas)) {
         if (otherArea.enabled && otherArea.z < area.z && rectsOverlap(area, otherArea) && !included.has(other)) {
           queue.push(other);
@@ -211,7 +219,17 @@ export function defaultArea(type: TAreaType, global: TGlobal, z: number): TArea 
   if (type === 'fractal') {
     return { ...common, type, kind: 'random', intervalMins: 10, quietFrom: '', quietTo: '', maxZoom: 3.5, offsetX: 0, offsetY: 0, outerWhite: 50, whiteCutoff: 25, negative: false, dither: 'threshold', bias: 0 };
   }
-  return { ...common, type };
+  return {
+    ...common,
+    type: 'svg',
+    src: null,
+    fit: 'contain',
+    size: { value: 100, unit: '%' },
+    posX: { value: 50, unit: '%' },
+    posY: { value: 50, unit: '%' },
+    flipH: false,
+    flipV: false,
+  };
 }
 
 // Anything arriving from disk or the network is untrusted: missing or
@@ -290,12 +308,24 @@ function normalizeByType(raw: unknown, global: TGlobal, z: number): TArea {
     };
   }
 
-  return { ...base, ...geometry, overlapped };
+  const src = source['src'];
+  return {
+    ...base,
+    ...geometry,
+    overlapped,
+    src: typeof src === 'string' && src !== '' ? src : null,
+    fit: oneOf<TSvgFit>(source['fit'], SVG_FITS, base.fit),
+    size: measure(source['size'], base.size),
+    posX: measure(source['posX'], base.posX),
+    posY: measure(source['posY'], base.posY),
+    flipH: typeof source['flipH'] === 'boolean' ? source['flipH'] : base.flipH,
+    flipV: typeof source['flipV'] === 'boolean' ? source['flipV'] : base.flipV,
+  };
 }
 
 // The state an area starts with. Fractal starts at the boot timestamp; text
 // carries none (its text is a template over the variable pool), and image and
-// svg carry none yet.
+// svg carry none.
 export function defaultStateFor(area: TArea): TAreaState {
   // Fixed per process, not per call: the preview re-renders on every edit,
   // and the picture must hold still while offsets and the like are tuned.

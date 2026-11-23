@@ -1,10 +1,12 @@
+import { createCanvas } from 'canvas';
 import type { CanvasRenderingContext2D } from 'canvas';
 
-import type { TArea, TAreaState, TFractalArea, TGlobal, TImageArea, TLayout, TLayoutState, TMeasure, TTextArea } from './types.ts';
-import { byZ } from './area.ts';
+import type { TArea, TAreaState, TFractalArea, TGlobal, TImageArea, TLayout, TLayoutState, TMeasure, TSvgArea, TTextArea } from './types.ts';
+import { byZ, keepsBackdrop } from './area.ts';
 import { dither } from './dither.ts';
 import { fractalGray } from './fractal.ts';
 import type { ImageBank } from './images.ts';
+import { naturalSize, rasterize } from './svgs.ts';
 import { expandTokens } from './variables.ts';
 import type { TVariables } from './variables.ts';
 
@@ -105,6 +107,88 @@ function drawImageArea(
   return true;
 }
 
+// Biggest bitmap an svg is rasterized to, per side. A 'width: 5000%' typo
+// should draw nothing, not allocate a gigabyte.
+const MAX_SVG_SIDE = 2048;
+
+// Below this alpha a pixel is "not part of the drawing" and stays transparent;
+// at or above it the pixel becomes opaque black or white by lightness. Just
+// under half, so a 1px hairline whose antialiased core covers ~half a pixel
+// still survives.
+const SVG_ALPHA_CUTOFF = 112;
+
+// The size the drawing is drawn at, from the fit mode - background-size.
+function svgDrawSize(area: TSvgArea, natW: number, natH: number): { w: number; h: number } {
+  const aspect = natW / natH;
+  switch (area.fit) {
+    case 'contain':
+    case 'cover': {
+      const byWidth = area.w / aspect <= area.h; // the box is taller than the drawing
+      const fitWidth = area.fit === 'contain' ? byWidth : !byWidth;
+      return fitWidth ? { w: area.w, h: area.w / aspect } : { w: area.h * aspect, h: area.h };
+    }
+    case 'stretch':
+      return { w: area.w, h: area.h };
+    case 'natural':
+      return { w: natW, h: natH };
+    case 'width': {
+      const w = resolveSize(area.size, area.w);
+      return { w, h: w / aspect };
+    }
+    case 'height': {
+      const h = resolveSize(area.size, area.h);
+      return { w: h * aspect, h };
+    }
+  }
+}
+
+function drawSvgArea(ctx: CanvasRenderingContext2D, area: TSvgArea): boolean {
+  const natural = area.src === null ? null : naturalSize(area.src);
+  if (area.src === null || !natural) return false;
+
+  const size = svgDrawSize(area, natural.width, natural.height);
+  if (!(size.w >= 1 && size.h >= 1) || size.w > MAX_SVG_SIDE || size.h > MAX_SVG_SIDE) return false;
+
+  const image = rasterize(area.src, size.w, size.h, area.fit === 'stretch');
+  if (!image) return false;
+
+  // Work in area-local coordinates on a scratch canvas: the area's rectangle
+  // is the clip, and the flips mirror the whole box about its centre.
+  const scratch = createCanvas(area.w, area.h);
+  const sctx = scratch.getContext('2d');
+  sctx.translate(area.w / 2, area.h / 2);
+  sctx.scale(area.flipH ? -1 : 1, area.flipV ? -1 : 1);
+  sctx.translate(-area.w / 2, -area.h / 2);
+  sctx.drawImage(
+    image,
+    resolvePosition(area.posX, area.w, image.width),
+    resolvePosition(area.posY, area.h, image.height),
+    image.width,
+    image.height,
+  );
+
+  // Two colours only: light ink becomes white, dark ink black, the rest stays
+  // see-through so the layers below show.
+  const pixels = sctx.getImageData(0, 0, area.w, area.h);
+  const data = pixels.data;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3]! < SVG_ALPHA_CUTOFF) {
+      data[i + 3] = 0;
+      continue;
+    }
+    const lightness = 0.299 * data[i]! + 0.587 * data[i + 1]! + 0.114 * data[i + 2]!;
+    const v = lightness < 128 ? 0 : 255;
+    data[i] = v;
+    data[i + 1] = v;
+    data[i + 2] = v;
+    data[i + 3] = 255;
+  }
+  sctx.putImageData(pixels, 0, 0);
+
+  ctx.drawImage(scratch, area.x, area.y);
+  return true;
+}
+
 // Seeds come from /intake as strings and from the timer as numbers.
 export function seedOf(state: TAreaState): number {
   const value = Number(state['seed']);
@@ -170,8 +254,8 @@ export function drawArea(
   variables: TVariables,
   name = '',
 ): void {
-  // A halo text area is the one thing that draws over what is below it.
-  if (!(area.type === 'text' && area.backdrop === 'halo')) clearArea(ctx, area);
+  // Halo text and svg are the things that draw over what is below them.
+  if (!keepsBackdrop(area)) clearArea(ctx, area);
 
   switch (area.type) {
     case 'text':
@@ -183,7 +267,7 @@ export function drawArea(
       if (!drawImageArea(ctx, area, images)) drawPlaceholder(ctx, area, 'image');
       break;
     case 'svg':
-      drawPlaceholder(ctx, area, 'svg');
+      if (!drawSvgArea(ctx, area)) drawPlaceholder(ctx, area, 'svg');
       break;
     case 'fractal':
       drawFractalArea(ctx, area, state, name);

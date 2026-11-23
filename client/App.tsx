@@ -177,19 +177,22 @@ export function App() {
                     if (edit((store) => doc.createArea(store, selected, name, type))) setSelectedArea(name);
                   }}
                 />
-              </div>
-
-              <div className="workspace-side">
                 <AreaList
                   layout={layout}
                   selected={selectedArea}
                   filter={filter}
                   onFilter={setFilter}
                   onSelect={setSelectedArea}
+                  onReorder={(name, target, placement) => {
+                    edit((store) => doc.moveArea(store, selected, name, target, placement));
+                  }}
                   onToggle={(name, enabled) => {
                     edit((store) => doc.updateArea(store, selected, name, { enabled }));
                   }}
                 />
+              </div>
+
+              <div className="workspace-side">
                 {area && selectedArea !== null ? (
                   <AreaForm
                     name={selectedArea}
@@ -202,9 +205,6 @@ export function App() {
                     }}
                     onRename={async (to) => {
                       if (edit((store) => doc.renameArea(store, selected, selectedArea, to))) setSelectedArea(to);
-                    }}
-                    onBringToFront={async () => {
-                      edit((store) => doc.bringAreaToFront(store, selected, selectedArea));
                     }}
                     onClone={async () => {
                       // Ask the document layer which name it will pick, rather

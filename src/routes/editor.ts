@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { createCanvas } from 'canvas';
 
 import * as images from '../images.ts';
+import * as svgs from '../svgs.ts';
 import { preload as preloadImages } from '../images.ts';
 import * as store from '../store.ts';
 import { DocumentError, normalizeStore } from '../document.ts';
@@ -194,5 +195,49 @@ editorRouter.delete('/images/:id', (req, res) => {
   images.remove(param(req, 'id')).then(
     () => res.json({ success: true }),
     (error: unknown) => fail(res, error, 'Image delete failed'),
+  );
+});
+
+// SVGs follow the same rules as images: content, so they upload at once.
+editorRouter.post('/svgs', raw({ type: ['image/svg+xml'], limit: '2mb' }), (req, res) => {
+  Promise.resolve()
+    .then(() => {
+      const body: unknown = req.body;
+      if (!Buffer.isBuffer(body)) throw new DocumentError('send the file as a raw body with Content-Type image/svg+xml');
+      return svgs.saveSvg(body);
+    })
+    .then(
+      (svg) => res.json({ success: true, svg }),
+      (error: unknown) => fail(res, error, 'SVG upload failed'),
+    );
+});
+
+editorRouter.get('/svgs', (_req, res) => {
+  svgs.list().then(
+    (list) => res.json({ success: true, svgs: list }),
+    (error: unknown) => fail(res, error, 'SVG list failed'),
+  );
+});
+
+editorRouter.get('/svgs/:id', (req, res) => {
+  const file = svgs.pathFor(param(req, 'id'));
+  if (!file) {
+    res.status(400).json({ success: false, message: 'bad svg id' });
+    return;
+  }
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  // Served as an <img> source only; the CSP keeps anything inside it inert
+  // if someone opens the URL directly.
+  res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'");
+  res.type('image/svg+xml');
+  res.sendFile(file, (error) => {
+    if (error) res.status(404).end();
+  });
+});
+
+editorRouter.delete('/svgs/:id', (req, res) => {
+  svgs.remove(param(req, 'id')).then(
+    () => res.json({ success: true }),
+    (error: unknown) => fail(res, error, 'SVG delete failed'),
   );
 });

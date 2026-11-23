@@ -30,6 +30,16 @@ export type TUnit = (typeof UNITS)[number];
 export const SIZE_AXES = ['width', 'height'] as const;
 export type TSizeAxis = (typeof SIZE_AXES)[number];
 
+// How an svg area sizes its vector inside the box - the CSS background-size
+// keywords, plus the one-axis form the image area already has.
+//   contain  whole drawing visible, aspect kept (CSS contain)
+//   cover    box fully covered, aspect kept, overflow clipped (CSS cover)
+//   stretch  box filled exactly, aspect NOT kept (CSS `100% 100%`)
+//   natural  the SVG's own size (CSS auto)
+//   width / height   one axis from `size`, the other follows the aspect
+export const SVG_FITS = ['contain', 'cover', 'stretch', 'natural', 'width', 'height'] as const;
+export type TSvgFit = (typeof SVG_FITS)[number];
+
 // What a fractal area draws. 'random' lets each new seed pick one of the two.
 export const FRACTAL_KINDS = ['random', 'julia', 'mandelbrot'] as const;
 export type TFractalKind = (typeof FRACTAL_KINDS)[number];
@@ -112,8 +122,23 @@ export interface TImageArea extends TAreaCommon {
   bias: number;
 }
 
+// A vector drawing on a transparent background: only the SVG's own ink is
+// painted, so whatever is under the area shows through everywhere else. There
+// is no dithering - colours are reduced to the two the panel has, by lightness
+// (light = white, dark = black), and partly transparent edge pixels are kept
+// or dropped whole. Placement follows the image area's CSS model.
 export interface TSvgArea extends TAreaCommon {
   type: 'svg';
+  src: string | null; // id from /api/editor/svgs, null = nothing uploaded yet
+  fit: TSvgFit;
+  // Only used by the 'width' / 'height' fits.
+  size: TMeasure;
+  posX: TMeasure;
+  posY: TMeasure;
+  // Mirror the whole box (not just the drawing), so a drawing parked at the
+  // left edge goes to the right edge when flipped horizontally.
+  flipH: boolean;
+  flipV: boolean;
 }
 
 // Generated art: a black-and-white fractal, re-rolled on a timer. The picture

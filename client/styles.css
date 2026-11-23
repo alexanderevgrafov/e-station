@@ -154,8 +154,21 @@ body {
   flex: 0 0 auto;
 }
 
+.workspace-canvas {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .workspace-canvas .panel {
   margin-bottom: 0;
+}
+
+/* The list sits under the preview and must not make the column wider than
+   the preview: width 0 + min-width 100% takes the column's width, no more. */
+.workspace-canvas .area-panel {
+  width: 0;
+  min-width: 100%;
 }
 
 .workspace-side {
@@ -556,7 +569,7 @@ button.tiny {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 220px;
+  max-height: 280px;
   overflow-y: auto;
 }
 
@@ -571,6 +584,41 @@ button.tiny {
 
 .area-list li:hover {
   background: var(--panel-2);
+}
+
+.area-list li {
+  position: relative;
+}
+
+.drag-handle {
+  color: var(--muted);
+  cursor: grab;
+  letter-spacing: -2px;
+  user-select: none;
+}
+
+.area-list li.dragging {
+  opacity: 0.4;
+}
+
+/* Drop line: where the dragged row will land */
+.area-list li.drop-top::before,
+.area-list li.drop-bottom::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.area-list li.drop-top::before {
+  top: -1px;
+}
+
+.area-list li.drop-bottom::after {
+  bottom: -1px;
 }
 
 .area-list li.selected {

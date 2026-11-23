@@ -3,11 +3,12 @@ import { useEffect, useState } from 'react';
 import type { FontFamilyInfo } from '../api.ts';
 import { FractalFields } from './FractalFields.tsx';
 import { ImageFields } from './ImageFields.tsx';
+import { SvgFields } from './SvgFields.tsx';
 import { NumberField, TextField } from './fields.tsx';
 import { TokenChips } from './VariablesPanel.tsx';
 import { expandTokens, hasTokens, tokenNames } from '../../src/variables.ts';
 import type { TVariables } from '../../src/variables.ts';
-import type { TArea, TAreaType, TFractalArea, TImageArea, TTextArea } from '../../src/types.ts';
+import type { TArea, TAreaType, TFractalArea, TImageArea, TSvgArea, TTextArea } from '../../src/types.ts';
 import { AREA_TYPES, BACKDROPS, H_ALIGNS } from '../../src/types.ts';
 
 interface Props {
@@ -20,12 +21,11 @@ interface Props {
   variables: TVariables;
   onChange: (patch: Partial<TArea>) => Promise<void>;
   onRename: (to: string) => Promise<void>;
-  onBringToFront: () => Promise<void>;
   onClone: () => Promise<void>;
   onDelete: () => Promise<void>;
 }
 
-export function AreaForm({ name, area, existing, fonts, variables, onChange, onRename, onBringToFront, onClone, onDelete }: Props) {
+export function AreaForm({ name, area, existing, fonts, variables, onChange, onRename, onClone, onDelete }: Props) {
   const [nameDraft, setNameDraft] = useState(name);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -72,9 +72,6 @@ export function AreaForm({ name, area, existing, fonts, variables, onChange, onR
         </button>
         <button type="button" className="ghost" onClick={() => run(onClone)}>
           Clone
-        </button>
-        <button type="button" className="ghost" onClick={() => run(onBringToFront)}>
-          Bring to front
         </button>
         {confirming ? (
           <>
@@ -142,7 +139,7 @@ export function AreaForm({ name, area, existing, fonts, variables, onChange, onR
             {unset.length > 0 && (
               <>
                 {' '}
-                Not set yet: {unset.map((n) => <code key={n}>{`{${n}}`}</code>)} - shown as typed until{' '}
+                Not set yet: {unset.map((n) => <code key={n}>{`{${n}}`}</code>)} - shown blank until{' '}
                 <code>/intake?{unset[0]}=...</code> sets it.
               </>
             )}
@@ -222,7 +219,7 @@ export function AreaForm({ name, area, existing, fonts, variables, onChange, onR
 
       {area.type === 'fractal' && <FractalFields area={area as TFractalArea} onChange={onChange} />}
 
-      {area.type === 'svg' && <p className="hint">SVG is deliberately unimplemented for now.</p>}
+      {area.type === 'svg' && <SvgFields area={area as TSvgArea} onChange={onChange} />}
 
       {area.overlapped.length > 0 && (
         <p className="hint">

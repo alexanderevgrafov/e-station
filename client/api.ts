@@ -8,6 +8,13 @@ export interface StoredImage {
   bytes: number;
 }
 
+export interface StoredSvg {
+  id: string;
+  width: number;
+  height: number;
+  bytes: number;
+}
+
 export interface FontFamilyInfo {
   family: string;
   weights: string[];
@@ -119,6 +126,26 @@ export const api = {
   },
 
   imageUrl: (id: string): string => `/api/editor/images/${encode(id)}`,
+
+  uploadSvg: async (file: File): Promise<StoredSvg> => {
+    const response = await fetch('/api/editor/svgs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/svg+xml' },
+      body: file,
+    });
+    const payload = (await response.json()) as { success: boolean; svg?: StoredSvg; message?: string };
+    if (!payload.success || !payload.svg) throw new Error(payload.message ?? `upload failed: ${response.status}`);
+    return payload.svg;
+  },
+
+  svgs: async (): Promise<StoredSvg[]> => {
+    const response = await fetch('/api/editor/svgs');
+    const payload = (await response.json()) as { success: boolean; svgs?: StoredSvg[]; message?: string };
+    if (!payload.success || !payload.svgs) throw new Error(payload.message ?? 'could not list svgs');
+    return payload.svgs;
+  },
+
+  svgUrl: (id: string): string => `/api/editor/svgs/${encode(id)}`,
 
   sensors: async (): Promise<SensorInfo> => {
     const response = await fetch('/api/editor/sensors');
